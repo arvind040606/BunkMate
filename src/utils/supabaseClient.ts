@@ -92,7 +92,7 @@ export async function signUpUser(
     };
 
     const { error: profileError } = await supabase
-      .from('profiles')
+      .from('Bunkmate')
       .upsert(profilePayload);
 
     if (profileError) {
@@ -165,7 +165,7 @@ export async function resetUserPassword(email: string): Promise<{ success: boole
 export async function getUserProfile(userId: string): Promise<{ success: boolean; profile: SupabaseProfile | null; error?: string }> {
   try {
     const { data, error } = await supabase
-      .from('profiles')
+      .from('Bunkmate')
       .select('*')
       .eq('id', userId)
       .single();
@@ -189,7 +189,7 @@ export async function updateUserProfile(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const { error } = await supabase
-      .from('profiles')
+      .from('Bunkmate')
       .update(profileData)
       .eq('id', userId);
 

@@ -1,6 +1,6 @@
 # Supabase Database Setup for BunkMate
 
-This guide provides the SQL schema, Row Level Security (RLS) policies, and automated triggers required to set up user management in your Supabase project (`iqmmznvsvabmrzaupgjf`).
+This guide provides the SQL schema, Row Level Security (RLS) policies, and automated triggers required to set up user management in your Supabase project (`iqmmznvsvabmrzaupgjf`) using the `Bunkmate` table.
 
 ---
 
@@ -9,8 +9,8 @@ This guide provides the SQL schema, Row Level Security (RLS) policies, and autom
 Go to your **Supabase Dashboard** -> **SQL Editor** -> **New Query**, paste the code below, and click **Run**:
 
 ```sql
--- 1. Create the profiles table linked to Supabase Auth users
-create table if not exists public.profiles (
+-- 1. Create the Bunkmate table linked to Supabase Auth users
+create table if not exists public."Bunkmate" (
   id uuid references auth.users on delete cascade primary key,
   username text unique not null,
   display_name text,
@@ -24,26 +24,26 @@ create table if not exists public.profiles (
 );
 
 -- 2. Enable Row Level Security (RLS)
-alter table public.profiles enable row level security;
+alter table public."Bunkmate" enable row level security;
 
 -- 3. RLS Policies: Allow users full access to ONLY their own profiles
 create policy "Users can view their own profile"
-  on public.profiles for select
+  on public."Bunkmate" for select
   using ( auth.uid() = id );
 
 create policy "Users can insert their own profile"
-  on public.profiles for insert
+  on public."Bunkmate" for insert
   with check ( auth.uid() = id );
 
 create policy "Users can update their own profile"
-  on public.profiles for update
+  on public."Bunkmate" for update
   using ( auth.uid() = id );
 
--- 4. Automatically create a profile profile row when a new user registers in Supabase Auth
+-- 4. Automatically create a row in Bunkmate when a new user registers in Supabase Auth
 create or replace function public.handle_new_user()
 returns trigger as $$
 begin
-  insert into public.profiles (id, username, display_name)
+  insert into public."Bunkmate" (id, username, display_name)
   values (
     new.id,
     coalesce(new.raw_user_meta_data->>'username', split_part(new.email, '@', 1)),
@@ -64,7 +64,7 @@ create or replace trigger on_auth_user_created
 
 ## 2. Environment Variables Configuration
 
-Open your local `.env` file (and set these in your hosting environment, e.g., Vercel):
+Open your local `.env` file:
 
 ```env
 VITE_SUPABASE_URL="https://iqmmznvsvabmrzaupgjf.supabase.co"
