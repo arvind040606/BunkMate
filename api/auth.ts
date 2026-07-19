@@ -1,4 +1,4 @@
-import { randomBytes, pbkdf2Sync, createHmac } from 'crypto';
+import { randomBytes, pbkdf2Sync, createHmac, randomUUID } from 'crypto';
 import { dbInstance } from './database.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bunkmate_super_secret_dev_key';
@@ -206,7 +206,7 @@ export default async function handler(req: any, res: any) {
       const securityAnswerSalt = randomBytes(16).toString('hex');
       const securityAnswerHash = hashPassword(securityAnswer.trim().toLowerCase(), securityAnswerSalt);
       
-      const userId = `user-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      const userId = randomUUID();
 
       try {
         await dbInstance.addUser(

@@ -1,33 +1,32 @@
 # Supabase Database Setup for BunkMate
 
-This guide provides the SQL schema, Row Level Security (RLS) policies, and automated triggers required to set up user management and synchronization tables in your Supabase project (`iqmmznvsvabmrzaupgjf`).
+This guide provides the SQL queries to set up your existing Supabase database (`iqmmznvsvabmrzaupgjf`) to support user accounts and live cloud synchronization.
 
 ---
 
-## 1. SQL Commands to Execute
+## 1. Run SQL queries in Supabase Dashboard
 
-Go to your **Supabase Dashboard** -> **SQL Editor** -> **New Query**, paste the code below, and click **Run**:
+Go to your **Supabase Dashboard** -> **SQL Editor** -> **New Query**, paste the code blocks below, and click **Run**:
+
+### STEP A: Alter your existing `users` table
+This adds the columns required for password security, salting, and recovery clues to your existing `users` table:
 
 ```sql
--- 1. Create the users table in Supabase
-create table if not exists public.users (
-  id text primary key,
-  username text unique not null,
-  avatar_id text,
-  display_name text,
-  college text,
-  course text,
-  semester text,
-  section text,
-  group_name text,
-  createdAt bigint,
-  passwordHash text,
-  salt text,
-  securityQuestion text,
-  securityAnswerHash text,
-  securityAnswerSalt text
-);
+-- 1. Add missing auth and recovery columns to the users table
+alter table public.users add column if not exists "passwordHash" text;
+alter table public.users add column if not exists "salt" text;
+alter table public.users add column if not exists "securityQuestion" text;
+alter table public.users add column if not exists "securityAnswerHash" text;
+alter table public.users add column if not exists "securityAnswerSalt" text;
+alter table public.users add column if not exists "createdAt" bigint;
+```
 
+---
+
+### STEP B: Create the live synchronization tables
+This creates all the database tables needed to store your attendance, timetables, subjects, assignments, exams, settings, friends, and deletion trackers:
+
+```sql
 -- 2. Create the subjects table
 create table if not exists public.subjects (
   id text primary key,
@@ -129,8 +128,15 @@ create table if not exists public.sync_deletions (
   "recordId" text not null,
   "deletedAt" bigint not null
 );
+```
 
--- 10. Enable Row Level Security (RLS)
+---
+
+### STEP C: Configure access permissions (RLS Bypass)
+Run this block to enable Row Level Security (RLS) on all tables and grant read/write policies so the BunkMate clients can synchronize live data:
+
+```sql
+-- Enable Row Level Security (RLS)
 alter table public.users enable row level security;
 alter table public.subjects enable row level security;
 alter table public.timetable enable row level security;
@@ -141,7 +147,53 @@ alter table public.settings enable row level security;
 alter table public.friends enable row level security;
 alter table public.sync_deletions enable row level security;
 
--- 11. Create Simple Bypass RLS Policies (Allow Authenticated/Anon clients to run operations)
+-- Drop existing policies if any to prevent duplicates
+drop policy if exists "Select policy for users" on public.users;
+drop policy if exists "Insert policy for users" on public.users;
+drop policy if exists "Update policy for users" on public.users;
+drop policy if exists "Delete policy for users" on public.users;
+
+drop policy if exists "Select policy for subjects" on public.subjects;
+drop policy if exists "Insert policy for subjects" on public.subjects;
+drop policy if exists "Update policy for subjects" on public.subjects;
+drop policy if exists "Delete policy for subjects" on public.subjects;
+
+drop policy if exists "Select policy for timetable" on public.timetable;
+drop policy if exists "Insert policy for timetable" on public.timetable;
+drop policy if exists "Update policy for timetable" on public.timetable;
+drop policy if exists "Delete policy for timetable" on public.timetable;
+
+drop policy if exists "Select policy for attendance" on public.attendance;
+drop policy if exists "Insert policy for attendance" on public.attendance;
+drop policy if exists "Update policy for attendance" on public.attendance;
+drop policy if exists "Delete policy for attendance" on public.attendance;
+
+drop policy if exists "Select policy for assignments" on public.assignments;
+drop policy if exists "Insert policy for assignments" on public.assignments;
+drop policy if exists "Update policy for assignments" on public.assignments;
+drop policy if exists "Delete policy for assignments" on public.assignments;
+
+drop policy if exists "Select policy for exams" on public.exams;
+drop policy if exists "Insert policy for exams" on public.exams;
+drop policy if exists "Update policy for exams" on public.exams;
+drop policy if exists "Delete policy for exams" on public.exams;
+
+drop policy if exists "Select policy for settings" on public.settings;
+drop policy if exists "Insert policy for settings" on public.settings;
+drop policy if exists "Update policy for settings" on public.settings;
+drop policy if exists "Delete policy for settings" on public.settings;
+
+drop policy if exists "Select policy for friends" on public.friends;
+drop policy if exists "Insert policy for friends" on public.friends;
+drop policy if exists "Update policy for friends" on public.friends;
+drop policy if exists "Delete policy for friends" on public.friends;
+
+drop policy if exists "Select policy for sync_deletions" on public.sync_deletions;
+drop policy if exists "Insert policy for sync_deletions" on public.sync_deletions;
+drop policy if exists "Update policy for sync_deletions" on public.sync_deletions;
+drop policy if exists "Delete policy for sync_deletions" on public.sync_deletions;
+
+-- Create full-access RLS policies
 create policy "Select policy for users" on public.users for select using (true);
 create policy "Insert policy for users" on public.users for insert with check (true);
 create policy "Update policy for users" on public.users for update using (true);
@@ -192,19 +244,9 @@ create policy "Delete policy for sync_deletions" on public.sync_deletions for de
 
 ## 2. Environment Variables Configuration
 
-Open your local `.env` file:
+Ensure your `.env` file looks like this:
 
 ```env
 VITE_SUPABASE_URL="https://iqmmznvsvabmrzaupgjf.supabase.co"
 VITE_SUPABASE_ANON_KEY="sb_publishable_ejPrPSTFInDCOCvobcRsrw_SJNss7bD"
 ```
-
-> [!WARNING]
-> Do NOT expose your Supabase **Service Role Key** (the secret key) in the client application. Only use the **Anon/Public** key.
-
----
-
-## 3. System Highlights
-
-- Direct integration between frontend and backend via Vercel and localhost using standard Supabase JS client structures.
-- Offline-first cache ensures seamless local performance when network or server is offline.
