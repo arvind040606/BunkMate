@@ -1,0 +1,6 @@
+{
+  "name": "BunkMate",
+  "description": "A premium, offline-first mobile attendance tracker with smart bunk calculators and analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
