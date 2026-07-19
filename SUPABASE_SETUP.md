@@ -30,7 +30,7 @@ This creates all the database tables needed to store your attendance, timetables
 -- 2. Create the subjects table
 create table if not exists public.subjects (
   id text primary key,
-  "userId" text not null references public.users(id) on delete cascade,
+  "userId" uuid not null references public.users(id) on delete cascade,
   name text not null,
   code text,
   room text,
@@ -50,7 +50,7 @@ create table if not exists public.subjects (
 -- 3. Create the timetable table
 create table if not exists public.timetable (
   id text primary key,
-  "userId" text not null references public.users(id) on delete cascade,
+  "userId" uuid not null references public.users(id) on delete cascade,
   "subjectId" text not null references public.subjects(id) on delete cascade,
   "dayOfWeek" integer not null,
   time text not null,
@@ -62,7 +62,7 @@ create table if not exists public.timetable (
 -- 4. Create the attendance table
 create table if not exists public.attendance (
   id text primary key,
-  "userId" text not null references public.users(id) on delete cascade,
+  "userId" uuid not null references public.users(id) on delete cascade,
   "subjectId" text not null references public.subjects(id) on delete cascade,
   date text not null,
   status text not null,
@@ -74,7 +74,7 @@ create table if not exists public.attendance (
 -- 5. Create the assignments table
 create table if not exists public.assignments (
   id text primary key,
-  "userId" text not null references public.users(id) on delete cascade,
+  "userId" uuid not null references public.users(id) on delete cascade,
   "subjectId" text references public.subjects(id) on delete cascade,
   title text not null,
   "dueDate" text not null,
@@ -88,7 +88,7 @@ create table if not exists public.assignments (
 -- 6. Create the exams table
 create table if not exists public.exams (
   id text primary key,
-  "userId" text not null references public.users(id) on delete cascade,
+  "userId" uuid not null references public.users(id) on delete cascade,
   "subjectId" text references public.subjects(id) on delete cascade,
   title text not null,
   date text not null,
@@ -103,7 +103,7 @@ create table if not exists public.exams (
 -- 7. Create the settings table
 create table if not exists public.settings (
   id text primary key,
-  "userId" text not null references public.users(id) on delete cascade,
+  "userId" uuid not null references public.users(id) on delete cascade,
   key text not null,
   value text not null,
   "createdAt" text,
@@ -114,8 +114,8 @@ create table if not exists public.settings (
 -- 8. Create the friends table
 create table if not exists public.friends (
   id text primary key,
-  "senderId" text not null references public.users(id) on delete cascade,
-  "receiverId" text not null references public.users(id) on delete cascade,
+  "senderId" uuid not null references public.users(id) on delete cascade,
+  "receiverId" uuid not null references public.users(id) on delete cascade,
   status text not null, -- 'pending' | 'accepted'
   "createdAt" bigint not null
 );
@@ -123,7 +123,7 @@ create table if not exists public.friends (
 -- 9. Create the sync_deletions table
 create table if not exists public.sync_deletions (
   id text primary key,
-  "userId" text not null references public.users(id) on delete cascade,
+  "userId" uuid not null references public.users(id) on delete cascade,
   "tableName" text not null,
   "recordId" text not null,
   "deletedAt" bigint not null
