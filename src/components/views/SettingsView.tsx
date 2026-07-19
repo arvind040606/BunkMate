@@ -1029,7 +1029,7 @@ export default function SettingsView({
       <div className="text-center pt-4">
         <p className="text-xs font-display font-semibold text-zinc-500">BunkMate Handcrafted Mobile App</p>
         <p className="text-[10px] font-mono text-zinc-500 mt-0.5">Version 1.0.0 </p>
-        <p className="text-[10px] font-sans font-medium text-zinc-650 mt-2">Developed by <span className="font-semibold text-zinc-450">Arvind Madaan & Krisha Sharma</span></p>
+        <p className="text-[10px] font-sans font-medium text-zinc-650 mt-2">Developed by <span className="font-semibold text-zinc-450">Arvind Madaan</span></p>
       </div>
 
       {/* Passcode lock setup modal overlay */}

@@ -32,6 +32,9 @@ export interface UserRecord {
   username: string;
   passwordHash: string;
   salt: string;
+  securityQuestion?: string;
+  securityAnswerHash?: string;
+  securityAnswerSalt?: string;
   createdAt: number;
 }
 
@@ -78,6 +81,9 @@ class DB {
         username TEXT UNIQUE NOT NULL,
         passwordHash TEXT NOT NULL,
         salt TEXT NOT NULL,
+        securityQuestion TEXT,
+        securityAnswerHash TEXT,
+        securityAnswerSalt TEXT,
         createdAt INTEGER NOT NULL
       );
 
@@ -215,6 +221,17 @@ class DB {
     for (const statement of statements) {
       await this.client.execute(statement);
     }
+
+    // Dynamic schema migrations for existing databases
+    try {
+      await this.client.execute('ALTER TABLE users ADD COLUMN securityQuestion TEXT');
+    } catch {}
+    try {
+      await this.client.execute('ALTER TABLE users ADD COLUMN securityAnswerHash TEXT');
+    } catch {}
+    try {
+      await this.client.execute('ALTER TABLE users ADD COLUMN securityAnswerSalt TEXT');
+    } catch {}
   }
 
   // Base raw query executor
@@ -255,10 +272,18 @@ class DB {
     return (await this.query('SELECT * FROM users')) as UserRecord[];
   }
 
-  public async addUser(id: string, username: string, passwordHash: string, salt: string): Promise<void> {
+  public async addUser(
+    id: string, 
+    username: string, 
+    passwordHash: string, 
+    salt: string,
+    securityQuestion?: string,
+    securityAnswerHash?: string,
+    securityAnswerSalt?: string
+  ): Promise<void> {
     await this.run(
-      'INSERT INTO users (id, username, passwordHash, salt, createdAt) VALUES (?, ?, ?, ?, ?)',
-      [id, username, passwordHash, salt, Date.now()]
+      'INSERT INTO users (id, username, passwordHash, salt, securityQuestion, securityAnswerHash, securityAnswerSalt, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, username, passwordHash, salt, securityQuestion || null, securityAnswerHash || null, securityAnswerSalt || null, Date.now()]
     );
   }
 

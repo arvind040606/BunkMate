@@ -139,7 +139,13 @@ export class SyncService {
     return isNaN(parsed) ? 0 : parsed;
   }
 
-  public async registerOrLogin(username: string, password: string, action: 'register' | 'login'): Promise<{ success: boolean; error?: string }> {
+  public async registerOrLogin(
+    username: string, 
+    password: string, 
+    action: 'register' | 'login', 
+    securityQuestion?: string, 
+    securityAnswer?: string
+  ): Promise<{ success: boolean; error?: string }> {
     try {
       this.isSyncInProgress = true;
       this.lastError = null;
@@ -149,7 +155,7 @@ export class SyncService {
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, username, password })
+        body: JSON.stringify({ action, username, password, securityQuestion, securityAnswer })
       });
 
       const data = await response.json();
@@ -208,6 +214,42 @@ export class SyncService {
       this.lastError = err.message || 'Network error';
       this.notify();
       return { success: false, error: this.lastError };
+    }
+  }
+
+  public async getSecurityQuestion(username: string): Promise<{ success: boolean; question?: string; error?: string }> {
+    try {
+      const url = getApiUrl('/api/auth');
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'get-security-question', username })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        return { success: false, error: data.error || 'Failed to fetch recovery question' };
+      }
+      return { success: true, question: data.question };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Network error' };
+    }
+  }
+
+  public async recoverPassword(username: string, securityAnswer: string, newPassword: string): Promise<{ success: boolean; message?: string; error?: string }> {
+    try {
+      const url = getApiUrl('/api/auth');
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'recover-password', username, securityAnswer, newPassword })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        return { success: false, error: data.error || 'Verification failed' };
+      }
+      return { success: true, message: data.message };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Network error' };
     }
   }
 

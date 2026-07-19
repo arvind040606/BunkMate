@@ -128,7 +128,7 @@ export default async function handler(req: any, res: any) {
 
     const { action, username, password } = body;
 
-    if (action !== 'change-password') {
+    if (action !== 'change-password' && action !== 'get-security-question' && action !== 'recover-password') {
       if (!username || !password || typeof username !== 'string' || typeof password !== 'string') {
         return sendJson(res, 400, { error: 'Username and password are required strings.' });
       }
@@ -142,13 +142,59 @@ export default async function handler(req: any, res: any) {
     }
 
     const cleanUsername = username.trim().toLowerCase();
-    if (action === 'register' || action === 'login') {
+    if (action === 'register' || action === 'login' || action === 'get-security-question' || action === 'recover-password') {
       if (cleanUsername.length < 3 || cleanUsername.length > 20 || !/^[a-zA-Z0-9_-]+$/.test(cleanUsername)) {
         return sendJson(res, 400, { error: 'Username must be 3-20 alphanumeric characters, underscores, or hyphens.' });
       }
     }
 
+    if (action === 'get-security-question') {
+      const user = await dbInstance.getUserByUsername(cleanUsername);
+      if (user && user.securityQuestion) {
+        return sendJson(res, 200, { success: true, question: user.securityQuestion });
+      } else {
+        // Return a realistic fake question to prevent user enumeration attacks and data harvesting
+        return sendJson(res, 200, { success: true, question: 'What is your high school name?' });
+      }
+    }
+
+    if (action === 'recover-password') {
+      const { securityAnswer, newPassword } = body;
+      if (!securityAnswer || !newPassword || typeof securityAnswer !== 'string' || typeof newPassword !== 'string') {
+        return sendJson(res, 400, { error: 'Security answer and new password are required.' });
+      }
+      if (newPassword.length < 6) {
+        return sendJson(res, 400, { error: 'New password must be at least 6 characters.' });
+      }
+
+      const user = await dbInstance.getUserByUsername(cleanUsername);
+      if (!user || !user.securityAnswerHash || !user.securityAnswerSalt) {
+        // Uniform error response to mitigate brute-force and confirmation attacks
+        return sendJson(res, 400, { error: 'Verification failed. Security answer is incorrect.' });
+      }
+
+      const verifiedHash = hashPassword(securityAnswer.trim().toLowerCase(), user.securityAnswerSalt);
+      if (verifiedHash !== user.securityAnswerHash) {
+        return sendJson(res, 400, { error: 'Verification failed. Security answer is incorrect.' });
+      }
+
+      // Answer matches! Perform password update
+      const newSalt = randomBytes(16).toString('hex');
+      const newPasswordHash = hashPassword(newPassword, newSalt);
+      await dbInstance.run('UPDATE users SET passwordHash = ?, salt = ? WHERE id = ?', [newPasswordHash, newSalt, user.id]);
+      console.log(`[Auth Recovery] Password reset successfully for user: ${user.username}`);
+      return sendJson(res, 200, { success: true, message: 'Password reset successfully. You can now log in.' });
+    }
+
     if (action === 'register') {
+      const { securityQuestion, securityAnswer } = body;
+      if (!securityQuestion || !securityAnswer || typeof securityQuestion !== 'string' || typeof securityAnswer !== 'string') {
+        return sendJson(res, 400, { error: 'Security question and answer are required for account recovery.' });
+      }
+      if (securityQuestion.trim().length < 5 || securityAnswer.trim().length < 2) {
+        return sendJson(res, 400, { error: 'Please choose a valid security question and a descriptive answer.' });
+      }
+
       const exists = await dbInstance.getUserByUsername(cleanUsername);
       if (exists) {
         return sendJson(res, 400, { error: 'Username is already taken.' });
@@ -156,10 +202,22 @@ export default async function handler(req: any, res: any) {
 
       const salt = randomBytes(16).toString('hex');
       const passwordHash = hashPassword(password, salt);
+      
+      const securityAnswerSalt = randomBytes(16).toString('hex');
+      const securityAnswerHash = hashPassword(securityAnswer.trim().toLowerCase(), securityAnswerSalt);
+      
       const userId = `user-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
       try {
-        await dbInstance.addUser(userId, cleanUsername, passwordHash, salt);
+        await dbInstance.addUser(
+          userId, 
+          cleanUsername, 
+          passwordHash, 
+          salt,
+          securityQuestion.trim(),
+          securityAnswerHash,
+          securityAnswerSalt
+        );
       } catch (err: any) {
         console.error('[Registration Error] DB insert failed:', err);
         if (err.message && (err.message.includes('UNIQUE') || err.message.includes('constraint'))) {
