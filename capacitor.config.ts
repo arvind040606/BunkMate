@@ -8,6 +8,10 @@ const config: CapacitorConfig = {
     androidScheme: 'https'
   },
   plugins: {
+    LocalNotifications: {
+      smallIcon: "ic_stat_notification",
+      iconColor: "#4f46e5"
+    },
     CapacitorSQLite: {
       androidIsEncryption: false,
       androidBiometric: {

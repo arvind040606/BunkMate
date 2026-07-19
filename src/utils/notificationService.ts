@@ -102,7 +102,7 @@ export class NotificationService {
               body,
               channelId,
               schedule: { at: new Date(Date.now() + 500) },
-              smallIcon: 'ic_launcher',
+              smallIcon: 'ic_stat_notification',
               actionTypeId: '',
               extra: null
             }
@@ -169,7 +169,7 @@ export class NotificationService {
           body: 'Yo! Thanks for installing BunkMate. Your attendance is safe with us. We got your back! 👊🔥',
           channelId: 'general',
           schedule: { at: new Date(Date.now() + 60 * 1000), allowWhileIdle: true }, // 1 minute from now
-          smallIcon: 'ic_launcher'
+          smallIcon: 'ic_stat_notification'
         });
         localStorage.setItem('bunkmate_welcome_scheduled', 'true');
         console.log('Welcome notification scheduled for 1 minute in the future with allowWhileIdle.');
@@ -248,7 +248,7 @@ export class NotificationService {
             body: funnyBodies11AM[dayOfWeek % 7],
             channelId: 'general',
             schedule: { at: date11AM, allowWhileIdle: true },
-            smallIcon: 'ic_launcher'
+            smallIcon: 'ic_stat_notification'
           });
         }
 
@@ -262,7 +262,7 @@ export class NotificationService {
             body: funnyBodies3PM[dayOfWeek % 7],
             channelId: 'general',
             schedule: { at: date3PM, allowWhileIdle: true },
-            smallIcon: 'ic_launcher'
+            smallIcon: 'ic_stat_notification'
           });
         }
 
@@ -276,7 +276,7 @@ export class NotificationService {
             body: funnyBodies7PM[dayOfWeek % 7],
             channelId: 'general',
             schedule: { at: date7PM, allowWhileIdle: true },
-            smallIcon: 'ic_launcher'
+            smallIcon: 'ic_stat_notification'
           });
         }
       }
@@ -367,7 +367,7 @@ export class NotificationService {
                 body,
                 channelId: 'academic',
                 schedule: { at: scheduledDate, allowWhileIdle: true },
-                smallIcon: 'ic_launcher'
+                smallIcon: 'ic_stat_notification'
               });
             }
           }
@@ -390,7 +390,7 @@ export class NotificationService {
                 body: `"${ass.title}" is due soon. Don't forget to submit and update BunkMate!`,
                 channelId: 'assignments',
                 schedule: { at: dueDateObj, allowWhileIdle: true },
-                smallIcon: 'ic_launcher'
+                smallIcon: 'ic_stat_notification'
               });
               assIndex++;
             }
@@ -416,7 +416,7 @@ export class NotificationService {
                   body: `Your exam starts in 2 hours. Location: ${exam.room || 'N/A'}. Good luck!`,
                   channelId: 'exams',
                   schedule: { at: reminderTime, allowWhileIdle: true },
-                  smallIcon: 'ic_launcher'
+                  smallIcon: 'ic_stat_notification'
                 });
                 examIndex++;
               }
