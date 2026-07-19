@@ -115,6 +115,49 @@ export default function SettingsView({
   const [isDecrypting, setIsDecrypting] = useState<boolean>(false);
   const [showImportPasswordText, setShowImportPasswordText] = useState<boolean>(false);
 
+  // Auto-clear error & success notices after 4 seconds
+  React.useEffect(() => {
+    if (pinError) {
+      const timer = setTimeout(() => setPinError(''), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [pinError]);
+
+  React.useEffect(() => {
+    if (importError) {
+      const timer = setTimeout(() => setImportError(''), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [importError]);
+
+  React.useEffect(() => {
+    if (deleteError) {
+      const timer = setTimeout(() => setDeleteError(''), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [deleteError]);
+
+  React.useEffect(() => {
+    if (passwordError) {
+      const timer = setTimeout(() => setPasswordError(''), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [passwordError]);
+
+  React.useEffect(() => {
+    if (passwordSuccess) {
+      const timer = setTimeout(() => setPasswordSuccess(''), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [passwordSuccess]);
+
+  React.useEffect(() => {
+    if (exportPasswordError) {
+      const timer = setTimeout(() => setExportPasswordError(''), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [exportPasswordError]);
+
   // Update simple toggle state
   const handleToggle = (key: keyof AppPreferences) => {
     triggerHaptic('medium');

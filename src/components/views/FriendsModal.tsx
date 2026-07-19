@@ -102,6 +102,20 @@ export default function FriendsModal({ onClose }: FriendsModalProps) {
   }, []);
 
   useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => setError(null), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [error]);
+
+  useEffect(() => {
+    if (successMessage) {
+      const timer = setTimeout(() => setSuccessMessage(null), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [successMessage]);
+
+  useEffect(() => {
     const query = searchQuery.trim();
     if (!query) {
       setSearchResults([]);

@@ -90,6 +90,13 @@ export default function FriendProfileModal({
     };
   }, [username]);
 
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => setError(null), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [error]);
+
   // Determine Class Scheduling Status (Upcoming, Completed, Ongoing)
   const getScheduledStatus = (timeStr: string, durationMins: number) => {
     try {

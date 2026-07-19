@@ -123,6 +123,13 @@ export default function TimetableWizardModal({
     return () => clearInterval(interval);
   }, [step]);
 
+  React.useEffect(() => {
+    if (errorMessage) {
+      const timer = setTimeout(() => setErrorMessage(null), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [errorMessage]);
+
   // Normalize name for matching theory class with corresponding lab/tutorials
   const normalizeSubjectName = (name: string): string => {
     return name

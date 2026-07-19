@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Lock, User, RefreshCw, KeyRound, ShieldAlert, HelpCircle, ShieldCheck, ArrowLeft } from 'lucide-react';
 import { syncService } from '../../utils/syncService';
@@ -39,6 +39,20 @@ export default function LoginModal({ onClose, onSuccess }: LoginModalProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => setError(null), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [error]);
+
+  useEffect(() => {
+    if (successMessage) {
+      const timer = setTimeout(() => setSuccessMessage(null), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [successMessage]);
 
   const activeQuestion = isCustomQuestion ? customQuestion : securityQuestion;
 
