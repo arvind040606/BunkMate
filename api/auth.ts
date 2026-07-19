@@ -303,7 +303,20 @@ export default async function handler(req: any, res: any) {
       const newSalt = randomBytes(16).toString('hex');
       const newPasswordHash = hashPassword(newPassword, newSalt);
 
-      await dbInstance.run('UPDATE users SET passwordHash = ?, salt = ? WHERE id = ?', [newPasswordHash, newSalt, user.id]);
+      const { securityQuestion, securityAnswer } = body;
+      if (securityQuestion && securityAnswer) {
+        if (securityQuestion.trim().length < 5 || securityAnswer.trim().length < 2) {
+          return sendJson(res, 400, { error: 'Please choose a valid security question and a descriptive answer.' });
+        }
+        const securityAnswerSalt = randomBytes(16).toString('hex');
+        const securityAnswerHash = hashPassword(securityAnswer.trim().toLowerCase(), securityAnswerSalt);
+        await dbInstance.run(
+          'UPDATE users SET passwordHash = ?, salt = ?, securityQuestion = ?, securityAnswerHash = ?, securityAnswerSalt = ? WHERE id = ?',
+          [newPasswordHash, newSalt, securityQuestion.trim(), securityAnswerHash, securityAnswerSalt, user.id]
+        );
+      } else {
+        await dbInstance.run('UPDATE users SET passwordHash = ?, salt = ? WHERE id = ?', [newPasswordHash, newSalt, user.id]);
+      }
       console.log(`[Auth ChangePassword] Password updated for user: ${user.username} (UserId: ${user.id})`);
 
       // Generate a new session token because password changed

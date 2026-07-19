@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Settings, Sliders, Volume2, Key, Download, Upload, Trash2, ShieldCheck, RefreshCw, AlertTriangle, Fingerprint, Lock, CheckCircle2, Bell, Clock, Sparkles, Shield, Eye, EyeOff, FileText, Cloud, Users, Smartphone, LogOut, User, Image as ImageIcon, ZoomIn, ZoomOut, X } from 'lucide-react';
+import { Settings, Sliders, Volume2, Key, Download, Upload, Trash2, ShieldCheck, RefreshCw, AlertTriangle, Fingerprint, Lock, CheckCircle2, Bell, Clock, Sparkles, Shield, Eye, EyeOff, FileText, Cloud, Users, Smartphone, LogOut, User, Image as ImageIcon, ZoomIn, ZoomOut, X, HelpCircle } from 'lucide-react';
 import { AppPreferences, Subject, AttendanceRecord } from '../../types';
 import { triggerHaptic, db } from '../../utils/db';
 import { encryptData, decryptData } from '../../utils/crypto';
@@ -9,6 +9,14 @@ import LoginModal from './LoginModal';
 import FriendsModal from './FriendsModal';
 import ConnectedDevicesModal from './ConnectedDevicesModal';
 import CompleteProfileModal, { getAvatarEmoji, renderAvatar } from './CompleteProfileModal';
+
+const PRESET_QUESTIONS = [
+  "What was the name of your first school?",
+  "What is your mother's maiden name?",
+  "What is your major course name?",
+  "What was the name of your first pet?",
+  "In what city were you born?"
+];
 
 interface SettingsViewProps {
   preferences: AppPreferences;
@@ -100,6 +108,13 @@ export default function SettingsView({
   const [passwordError, setPasswordError] = useState<string>('');
   const [passwordSuccess, setPasswordSuccess] = useState<string>('');
   const [isUpdatingPassword, setIsUpdatingPassword] = useState<boolean>(false);
+
+  // Security Question (Clue) Update inside password change
+  const [updateSecurityClue, setUpdateSecurityClue] = useState<boolean>(false);
+  const [securityQuestion, setSecurityQuestion] = useState<string>(PRESET_QUESTIONS[0]);
+  const [customQuestion, setCustomQuestion] = useState<string>('');
+  const [isCustomQuestion, setIsCustomQuestion] = useState<boolean>(false);
+  const [securityAnswer, setSecurityAnswer] = useState<string>('');
 
   // Backup Password security states
   const [showExportModal, setShowExportModal] = useState<boolean>(false);
@@ -461,12 +476,31 @@ export default function SettingsView({
       return;
     }
 
+    const activeQuestion = isCustomQuestion ? customQuestion.trim() : securityQuestion.trim();
+    if (updateSecurityClue) {
+      if (!activeQuestion || activeQuestion.length < 5) {
+        triggerHaptic('error');
+        setPasswordError('Please provide a valid security question.');
+        return;
+      }
+      if (!securityAnswer.trim() || securityAnswer.trim().length < 2) {
+        triggerHaptic('error');
+        setPasswordError('Please provide a descriptive answer for your recovery clue.');
+        return;
+      }
+    }
+
     setIsUpdatingPassword(true);
     setPasswordError('');
     setPasswordSuccess('');
     triggerHaptic('heavy');
 
-    const result = await syncService.changePassword(oldPassword, newPassword);
+    const result = await syncService.changePassword(
+      oldPassword, 
+      newPassword,
+      updateSecurityClue ? activeQuestion : undefined,
+      updateSecurityClue ? securityAnswer.trim() : undefined
+    );
     setIsUpdatingPassword(false);
 
     if (result.success) {
@@ -475,6 +509,10 @@ export default function SettingsView({
       setOldPassword('');
       setNewPassword('');
       setConfirmNewPassword('');
+      setSecurityAnswer('');
+      setCustomQuestion('');
+      setIsCustomQuestion(false);
+      setUpdateSecurityClue(false);
       setTimeout(() => {
         setShowChangePasswordModal(false);
         setPasswordSuccess('');
@@ -719,7 +757,20 @@ export default function SettingsView({
             {/* Change Password & Delete Account Section */}
             <div className="pt-2 border-t border-zinc-900/40 space-y-2">
               <button
-                onClick={() => { triggerHaptic('medium'); setShowChangePasswordModal(true); setOldPassword(''); setNewPassword(''); setConfirmNewPassword(''); setPasswordError(''); setPasswordSuccess(''); }}
+                onClick={() => {
+                  triggerHaptic('medium');
+                  setShowChangePasswordModal(true);
+                  setOldPassword('');
+                  setNewPassword('');
+                  setConfirmNewPassword('');
+                  setPasswordError('');
+                  setPasswordSuccess('');
+                  setUpdateSecurityClue(false);
+                  setSecurityQuestion(PRESET_QUESTIONS[0]);
+                  setCustomQuestion('');
+                  setIsCustomQuestion(false);
+                  setSecurityAnswer('');
+                }}
                 className="w-full py-2 bg-zinc-900/40 hover:bg-zinc-800/40 border border-dashed border-zinc-805 text-zinc-300 rounded-lg text-[10px] font-bold transition flex items-center justify-center space-x-1 cursor-pointer"
               >
                 <Key className="w-3 h-3 text-indigo-400 mr-1" />
@@ -1699,6 +1750,77 @@ export default function SettingsView({
                     className="w-full px-3.5 py-2.5 bg-zinc-950 border border-zinc-800 text-white rounded-xl focus:outline-none focus:border-indigo-500 text-xs font-bold"
                   />
                 </div>
+
+                <div className="pt-2 border-t border-zinc-900 space-y-2">
+                  <label className="flex items-center space-x-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      disabled={isUpdatingPassword}
+                      checked={updateSecurityClue}
+                      onChange={e => setUpdateSecurityClue(e.target.checked)}
+                      className="w-4 h-4 rounded border-zinc-800 bg-zinc-950 text-indigo-650 focus:ring-indigo-500 cursor-pointer"
+                    />
+                    <span className="text-[10px] font-black text-indigo-405 uppercase tracking-wider">Update Security Question (Clue)</span>
+                  </label>
+
+                  {updateSecurityClue && (
+                    <div className="space-y-3 pt-1">
+                      <div>
+                        <label className="block text-[9px] uppercase tracking-wider text-zinc-500 font-black mb-1">Security Question</label>
+                        {!isCustomQuestion ? (
+                          <select
+                            disabled={isUpdatingPassword}
+                            value={securityQuestion}
+                            onChange={e => {
+                              if (e.target.value === 'custom') {
+                                setIsCustomQuestion(true);
+                              } else {
+                                setSecurityQuestion(e.target.value);
+                              }
+                            }}
+                            className="w-full bg-zinc-950 border border-zinc-805 rounded-xl py-2 px-3 text-xs font-bold text-white focus:outline-none focus:border-indigo-500 transition"
+                          >
+                            {PRESET_QUESTIONS.map((q, idx) => (
+                              <option key={idx} value={q}>{q}</option>
+                            ))}
+                            <option value="custom">Write custom question...</option>
+                          </select>
+                        ) : (
+                          <div className="space-y-1">
+                            <input
+                              type="text"
+                              disabled={isUpdatingPassword}
+                              value={customQuestion}
+                              onChange={e => setCustomQuestion(e.target.value)}
+                              placeholder="e.g. What is your favorite book?"
+                              className="w-full bg-zinc-950 border border-zinc-805 rounded-xl py-2 px-3 text-xs font-bold text-white focus:outline-none focus:border-indigo-500 transition"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setIsCustomQuestion(false)}
+                              className="text-[9px] font-semibold text-indigo-450 hover:text-indigo-400"
+                            >
+                              Use list instead
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="block text-[9px] uppercase tracking-wider text-zinc-500 font-black mb-1">Answer Clue</label>
+                        <input
+                          type="text"
+                          disabled={isUpdatingPassword}
+                          value={securityAnswer}
+                          onChange={e => setSecurityAnswer(e.target.value)}
+                          placeholder="Your secure recovery answer"
+                          className="w-full px-3.5 py-2.5 bg-zinc-950 border border-zinc-800 text-white rounded-xl focus:outline-none focus:border-indigo-500 text-xs font-bold"
+                        />
+                        <p className="text-[8px] text-zinc-500 font-semibold px-1 mt-0.5">Answer is hashed and private.</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="flex space-x-3 pt-2">
@@ -1712,13 +1834,18 @@ export default function SettingsView({
                     setConfirmNewPassword('');
                     setPasswordError('');
                     setPasswordSuccess('');
+                    setUpdateSecurityClue(false);
+                    setSecurityQuestion(PRESET_QUESTIONS[0]);
+                    setCustomQuestion('');
+                    setIsCustomQuestion(false);
+                    setSecurityAnswer('');
                   }}
                   className="flex-1 py-2.5 text-xs font-semibold bg-zinc-900 text-zinc-300 rounded-xl transition cursor-pointer disabled:opacity-50 text-center"
                 >
                   Cancel
                 </button>
                 <button
-                  disabled={isUpdatingPassword || !oldPassword || !newPassword || !confirmNewPassword}
+                  disabled={isUpdatingPassword || !oldPassword || !newPassword || !confirmNewPassword || (updateSecurityClue && (!securityAnswer || (!isCustomQuestion && !securityQuestion) || (isCustomQuestion && !customQuestion)))}
                   onClick={handleChangePassword}
                   className="flex-1 py-2.5 text-xs font-semibold bg-indigo-650 hover:bg-indigo-600 text-white rounded-xl shadow-sm transition cursor-pointer flex items-center justify-center space-x-1.5 disabled:opacity-50 text-center"
                 >

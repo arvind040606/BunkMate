@@ -323,7 +323,12 @@ export class SyncService {
     }
   }
 
-  public async changePassword(oldPassword: string, newPassword: string): Promise<{ success: boolean; error?: string }> {
+  public async changePassword(
+    oldPassword: string,
+    newPassword: string,
+    securityQuestion?: string,
+    securityAnswer?: string
+  ): Promise<{ success: boolean; error?: string }> {
     try {
       const prefs = db.getPrefs();
       if (!prefs.syncEnabled || !prefs.syncToken || !prefs.syncUsername) {
@@ -344,7 +349,9 @@ export class SyncService {
           action: 'change-password',
           username: prefs.syncUsername,
           oldPassword,
-          newPassword
+          newPassword,
+          securityQuestion,
+          securityAnswer
         })
       });
 
