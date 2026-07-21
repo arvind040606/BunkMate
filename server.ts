@@ -390,6 +390,8 @@ app.post('/api/friends', async (req, res) => {
   await friendsHandler(req, res);
 });
 
+
+
 // Start Express Server
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {

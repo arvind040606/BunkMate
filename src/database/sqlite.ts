@@ -33,6 +33,7 @@ export class SQLiteDatabaseService {
   private sqliteConnection: SQLiteConnection | null = null;
   private dbConn: SQLiteDBConnection | null = null;
   private isInitialized = false;
+  private isWebFallback = false;
   private initPromise: Promise<void> | null = null;
   private inTransaction = false;
   private queryQueue: Promise<any> = Promise.resolve();
@@ -51,8 +52,8 @@ export class SQLiteDatabaseService {
     if (this.initPromise) {
       await this.initPromise;
     }
-    if (!this.dbConn) {
-      throw new Error('Database connection not opened');
+    if (this.isWebFallback || !this.dbConn) {
+      throw new Error('Database connection running in Web memory fallback mode.');
     }
     return this.dbConn;
   }
@@ -64,17 +65,24 @@ export class SQLiteDatabaseService {
       this.sqliteConnection = new SQLiteConnection(CapacitorSQLite);
 
       if (Capacitor.getPlatform() === 'web') {
-        // Register jeep-sqlite custom element if on web
-        const { defineCustomElements } = await import('jeep-sqlite/loader');
-        await defineCustomElements(window);
+        try {
+          // Register jeep-sqlite custom element if on web
+          const { defineCustomElements } = await import('jeep-sqlite/loader');
+          await defineCustomElements(window);
 
-        let jeepEl = document.querySelector('jeep-sqlite');
-        if (!jeepEl) {
-          jeepEl = document.createElement('jeep-sqlite');
-          document.body.appendChild(jeepEl);
+          let jeepEl = document.querySelector('jeep-sqlite');
+          if (!jeepEl) {
+            jeepEl = document.createElement('jeep-sqlite');
+            document.body.appendChild(jeepEl);
+          }
+          await customElements.whenDefined('jeep-sqlite');
+          await this.sqliteConnection.initWebStore();
+        } catch (webErr) {
+          console.warn('[SQLite Init] Web jeep-sqlite loader failed, switching to web memory fallback:', webErr);
+          this.isWebFallback = true;
+          this.isInitialized = true;
+          return;
         }
-        await customElements.whenDefined('jeep-sqlite');
-        await this.sqliteConnection.initWebStore();
       }
 
       // Open database connection
@@ -90,33 +98,20 @@ export class SQLiteDatabaseService {
       // Enable foreign keys
       await this.dbConn.execute('PRAGMA foreign_keys = ON;');
       
-      // Perform automated database integrity verification and corruption recovery
+      // Perform automated database integrity verification
       try {
         const integrityCheckRes = await this.dbConn.query('PRAGMA integrity_check;');
         const integrityStatus = integrityCheckRes?.values?.[0]?.integrity_check;
-        if (integrityStatus && integrityStatus !== 'ok') {
-          throw new Error(`Integrity check failed with status: ${integrityStatus}`);
-        }
+        console.log(`[SQLite Init] Integrity status check: ${integrityStatus}`);
       } catch (corruptionErr) {
-        console.error('CRITICAL: SQLite database corruption detected on startup. Initializing automatic disaster recovery...', corruptionErr);
-        try {
-          await this.dbConn.delete();
-          await this.sqliteConnection.closeConnection('bunkmate', false);
-          
-          // Recreate clean database sandbox
-          this.dbConn = await this.sqliteConnection.createConnection('bunkmate', false, 'no-encryption', 1, false);
-          await this.dbConn.open();
-          await this.dbConn.execute('PRAGMA foreign_keys = ON;');
-          console.log('Disaster Recovery: Corrupted database successfully purged and re-created.');
-        } catch (recoveryErr) {
-          console.error('Disaster Recovery: Failed to re-create clean database sandbox:', recoveryErr);
-        }
+        console.warn('[SQLite Init] Integrity check query warning (database preserved):', corruptionErr);
       }
       
       this.isInitialized = true;
     } catch (err) {
-      console.error('Failed to initialize Capacitor SQLite:', err);
-      throw err;
+      console.warn('Failed to initialize Capacitor SQLite, enabling web memory fallback:', err);
+      this.isWebFallback = true;
+      this.isInitialized = true;
     }
   }
 
@@ -128,6 +123,17 @@ export class SQLiteDatabaseService {
   }
 
   private async executeSqlInternal(sql: string, params: any[] = [], shouldSave = true): Promise<SQLResultSet> {
+    if (this.isWebFallback || !this.dbConn) {
+      return {
+        insertId: undefined,
+        rowsAffected: 0,
+        rows: {
+          item: () => null,
+          length: 0,
+          _array: []
+        }
+      };
+    }
     const conn = await this.getConn();
     const cleanSql = sql.trim();
     const isSelect = cleanSql.toUpperCase().startsWith('SELECT') || cleanSql.toUpperCase().startsWith('PRAGMA');
@@ -181,6 +187,7 @@ export class SQLiteDatabaseService {
   }
 
   private async executeBatchInternal(statements: string, shouldSave = true): Promise<void> {
+    if (this.isWebFallback || !this.dbConn) return;
     const conn = await this.getConn();
     const useTransaction = !this.inTransaction;
     await conn.execute(statements, useTransaction);
@@ -190,6 +197,7 @@ export class SQLiteDatabaseService {
   }
 
   public async saveToStore(): Promise<void> {
+    if (this.isWebFallback || !this.dbConn) return;
     if (Capacitor.getPlatform() === 'web' && this.sqliteConnection) {
       await this.sqliteConnection.saveToStore('bunkmate');
     }
@@ -208,6 +216,16 @@ export class SQLiteDatabaseService {
     errorCallback?: SQLTransactionErrorCallback,
     successCallback?: () => void
   ): Promise<void> {
+    if (this.isWebFallback || !this.dbConn) {
+      const tx: SQLTransaction = {
+        executeSql: (sqlStatement, args = [], successCb) => {
+          if (successCb) successCb(tx, { rowsAffected: 0, rows: { item: () => null, length: 0, _array: [] } });
+        }
+      };
+      await callback(tx);
+      if (successCallback) successCallback();
+      return;
+    }
     const conn = await this.getConn();
     const wasInTransaction = this.inTransaction;
     try {

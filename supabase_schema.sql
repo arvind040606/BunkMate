@@ -114,6 +114,23 @@ create table if not exists public.sync_deletions (
   "deletedAt" bigint not null
 );
 
+-- Create latest_updates table
+create table if not exists public.latest_updates (
+  id uuid primary key default gen_random_uuid(),
+  latest_version text not null,
+  minimum_supported_version text not null,
+  google_drive_apk_url text not null,
+  release_notes text,
+  release_date timestamp with time zone default timezone('utc'::text, now()) not null,
+  force_update boolean default false not null,
+  maintenance_mode boolean default false not null,
+  maintenance_message text,
+  developer_email text default 'support@bunkmate.com'::text,
+  app_license text default 'MIT License'::text,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
 -- STEP C: Enable Row Level Security (RLS)
 alter table public.users enable row level security;
 alter table public.subjects enable row level security;
@@ -124,6 +141,7 @@ alter table public.exams enable row level security;
 alter table public.settings enable row level security;
 alter table public.friends enable row level security;
 alter table public.sync_deletions enable row level security;
+alter table public.latest_updates enable row level security;
 
 -- Drop existing policies if any to prevent duplicates
 drop policy if exists "Select policy for users" on public.users;
@@ -171,6 +189,9 @@ drop policy if exists "Insert policy for sync_deletions" on public.sync_deletion
 drop policy if exists "Update policy for sync_deletions" on public.sync_deletions;
 drop policy if exists "Delete policy for sync_deletions" on public.sync_deletions;
 
+drop policy if exists "Allow public read access to latest updates" on public.latest_updates;
+drop policy if exists "Allow developer insert/update access to latest updates" on public.latest_updates;
+
 -- Create full-access RLS policies
 create policy "Select policy for users" on public.users for select using (true);
 create policy "Insert policy for users" on public.users for insert with check (true);
@@ -216,3 +237,6 @@ create policy "Select policy for sync_deletions" on public.sync_deletions for se
 create policy "Insert policy for sync_deletions" on public.sync_deletions for insert with check (true);
 create policy "Update policy for sync_deletions" on public.sync_deletions for update using (true);
 create policy "Delete policy for sync_deletions" on public.sync_deletions for delete using (true);
+
+create policy "Allow public read access to latest updates" on public.latest_updates for select using (true);
+create policy "Allow developer insert/update access to latest updates" on public.latest_updates for all using (true);

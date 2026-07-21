@@ -5,18 +5,8 @@ import { AppPreferences, Subject, AttendanceRecord } from '../../types';
 import { triggerHaptic, db } from '../../utils/db';
 import { encryptData, decryptData } from '../../utils/crypto';
 import { syncService } from '../../utils/syncService';
-import LoginModal from './LoginModal';
-import FriendsModal from './FriendsModal';
-import ConnectedDevicesModal from './ConnectedDevicesModal';
+import { updateService } from '../../utils/updateService';
 import CompleteProfileModal, { getAvatarEmoji, renderAvatar } from './CompleteProfileModal';
-
-const PRESET_QUESTIONS = [
-  "What was the name of your first school?",
-  "What is your mother's maiden name?",
-  "What is your major course name?",
-  "What was the name of your first pet?",
-  "In what city were you born?"
-];
 
 interface SettingsViewProps {
   preferences: AppPreferences;
@@ -25,9 +15,8 @@ interface SettingsViewProps {
   subjects: Subject[];
   records: AttendanceRecord[];
   onRefreshNotifications?: () => void;
-  onOpenWizard?: () => void;
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
-  onTabChange?: (tab: 'home' | 'calendar' | 'subjects' | 'analytics' | 'settings') => void;
+  onOpenUpdates?: () => void;
 }
 
 export default function SettingsView({
@@ -37,19 +26,59 @@ export default function SettingsView({
   subjects,
   records,
   onRefreshNotifications,
-  onOpenWizard,
   onScroll,
-  onTabChange,
+  onOpenUpdates,
 }: SettingsViewProps) {
   const globalTarget = preferences.globalTarget;
   const [showPinSetupModal, setShowPinSetupModal] = useState<boolean>(false);
   const [tempPin, setTempPin] = useState<string>('');
   const [pinError, setPinError] = useState<string>('');
 
+  // App Update states
+  const [appVersion, setAppVersion] = useState<string>('1.0.0');
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState<boolean>(false);
+  const [updateResult, setUpdateResult] = useState<{
+    status: 'idle' | 'up_to_date' | 'available' | 'error';
+    latestVersion?: string;
+    releaseNotes?: string;
+    downloadUrl?: string;
+    errorMsg?: string;
+  }>({ status: 'idle' });
+
+  React.useEffect(() => {
+    updateService.getAppVersion().then(v => setAppVersion(v));
+  }, []);
+
+  const handleManualCheckUpdates = async () => {
+    triggerHaptic('medium');
+    setIsCheckingUpdate(true);
+    setUpdateResult({ status: 'idle' });
+    try {
+      const { updateAvailable, info } = await updateService.checkForUpdates(true);
+      if (updateAvailable && info) {
+        triggerHaptic('success');
+        setUpdateResult({
+          status: 'available',
+          latestVersion: info.latestVersion,
+          releaseNotes: info.releaseNotes,
+          downloadUrl: info.downloadUrl
+        });
+      } else {
+        triggerHaptic('success');
+        setUpdateResult({ status: 'up_to_date' });
+      }
+    } catch (err: any) {
+      triggerHaptic('error');
+      setUpdateResult({
+        status: 'error',
+        errorMsg: err.message || 'Failed to fetch update manifest.'
+      });
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  };
+
   // Cloud synchronization & social view states
-  const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
-  const [showFriendsModal, setShowFriendsModal] = useState<boolean>(false);
-  const [showConnectedDevicesModal, setShowConnectedDevicesModal] = useState<boolean>(false);
   const [showCompleteProfileModal, setShowCompleteProfileModal] = useState<boolean>(false);
   const [successPopup, setSuccessPopup] = useState<{ show: boolean; type: 'login' | 'register' | null }>({ show: false, type: null });
 
@@ -95,26 +124,7 @@ export default function SettingsView({
 
   const [showResetConfirm, setShowResetConfirm] = useState<boolean>(false);
   const [showPurgeConfirm, setShowPurgeConfirm] = useState<boolean>(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
-  const [deletePassword, setDeletePassword] = useState<string>('');
-  const [deleteError, setDeleteError] = useState<string>('');
-  const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
-  // Change password states
-  const [showChangePasswordModal, setShowChangePasswordModal] = useState<boolean>(false);
-  const [oldPassword, setOldPassword] = useState<string>('');
-  const [newPassword, setNewPassword] = useState<string>('');
-  const [confirmNewPassword, setConfirmNewPassword] = useState<string>('');
-  const [passwordError, setPasswordError] = useState<string>('');
-  const [passwordSuccess, setPasswordSuccess] = useState<string>('');
-  const [isUpdatingPassword, setIsUpdatingPassword] = useState<boolean>(false);
-
-  // Security Question (Clue) Update inside password change
-  const [updateSecurityClue, setUpdateSecurityClue] = useState<boolean>(false);
-  const [securityQuestion, setSecurityQuestion] = useState<string>(PRESET_QUESTIONS[0]);
-  const [customQuestion, setCustomQuestion] = useState<string>('');
-  const [isCustomQuestion, setIsCustomQuestion] = useState<boolean>(false);
-  const [securityAnswer, setSecurityAnswer] = useState<string>('');
 
   // Backup Password security states
   const [showExportModal, setShowExportModal] = useState<boolean>(false);
@@ -145,26 +155,7 @@ export default function SettingsView({
     }
   }, [importError]);
 
-  React.useEffect(() => {
-    if (deleteError) {
-      const timer = setTimeout(() => setDeleteError(''), 4000);
-      return () => clearTimeout(timer);
-    }
-  }, [deleteError]);
 
-  React.useEffect(() => {
-    if (passwordError) {
-      const timer = setTimeout(() => setPasswordError(''), 4000);
-      return () => clearTimeout(timer);
-    }
-  }, [passwordError]);
-
-  React.useEffect(() => {
-    if (passwordSuccess) {
-      const timer = setTimeout(() => setPasswordSuccess(''), 4000);
-      return () => clearTimeout(timer);
-    }
-  }, [passwordSuccess]);
 
   React.useEffect(() => {
     if (exportPasswordError) {
@@ -438,90 +429,7 @@ export default function SettingsView({
     window.location.reload();
   };
 
-  const handleDeleteAccount = async () => {
-    if (!deletePassword) return;
-    setIsDeleting(true);
-    setDeleteError('');
-    triggerHaptic('heavy');
 
-    const result = await syncService.deleteAccount(deletePassword);
-    setIsDeleting(false);
-
-    if (result.success) {
-      triggerHaptic('success');
-      alert('Your cloud account has been permanently deleted.');
-      setShowDeleteConfirm(false);
-      setDeletePassword('');
-      onUpdatePreferences(db.getPrefs());
-    } else {
-      triggerHaptic('error');
-      setDeleteError(result.error || 'Failed to delete account.');
-    }
-  };
-
-  const handleChangePassword = async () => {
-    if (!oldPassword || !newPassword || !confirmNewPassword) {
-      triggerHaptic('error');
-      setPasswordError('All password fields are required.');
-      return;
-    }
-    if (newPassword.length < 6) {
-      triggerHaptic('error');
-      setPasswordError('New password must be at least 6 characters.');
-      return;
-    }
-    if (newPassword !== confirmNewPassword) {
-      triggerHaptic('error');
-      setPasswordError('New passwords do not match.');
-      return;
-    }
-
-    const activeQuestion = isCustomQuestion ? customQuestion.trim() : securityQuestion.trim();
-    if (updateSecurityClue) {
-      if (!activeQuestion || activeQuestion.length < 5) {
-        triggerHaptic('error');
-        setPasswordError('Please provide a valid security question.');
-        return;
-      }
-      if (!securityAnswer.trim() || securityAnswer.trim().length < 2) {
-        triggerHaptic('error');
-        setPasswordError('Please provide a descriptive answer for your recovery clue.');
-        return;
-      }
-    }
-
-    setIsUpdatingPassword(true);
-    setPasswordError('');
-    setPasswordSuccess('');
-    triggerHaptic('heavy');
-
-    const result = await syncService.changePassword(
-      oldPassword, 
-      newPassword,
-      updateSecurityClue ? activeQuestion : undefined,
-      updateSecurityClue ? securityAnswer.trim() : undefined
-    );
-    setIsUpdatingPassword(false);
-
-    if (result.success) {
-      triggerHaptic('success');
-      setPasswordSuccess('Password updated successfully!');
-      setOldPassword('');
-      setNewPassword('');
-      setConfirmNewPassword('');
-      setSecurityAnswer('');
-      setCustomQuestion('');
-      setIsCustomQuestion(false);
-      setUpdateSecurityClue(false);
-      setTimeout(() => {
-        setShowChangePasswordModal(false);
-        setPasswordSuccess('');
-      }, 1500);
-    } else {
-      triggerHaptic('error');
-      setPasswordError(result.error || 'Failed to update password.');
-    }
-  };
 
   return (
     <div className="flex-1 overflow-y-auto px-5 pt-4 pb-32 select-none space-y-5" onScroll={onScroll}>
@@ -535,102 +443,7 @@ export default function SettingsView({
         </h2>
       </div>
 
-      {/* Student Profile Card or Login/Register Prompt */}
-      {preferences.syncEnabled && preferences.syncToken ? (
-        <div className="relative overflow-hidden bg-gradient-to-br from-indigo-950/20 via-zinc-900/50 to-zinc-950 border border-white/5 rounded-3xl p-5 shadow-xl space-y-4 text-left">
-          <div className="absolute -top-12 -right-12 w-28 h-28 bg-indigo-500/5 rounded-full blur-2xl pointer-events-none" />
-          
-          <div className="flex justify-between items-start">
-            <div className="flex items-center space-x-3.5">
-              <div className="relative">
-                {renderAvatar(preferences.avatarId, preferences.displayName, 'w-14 h-14 text-xl')}
-                {/* Online status indicator */}
-                <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-emerald-500 rounded-full border border-zinc-950 flex items-center justify-center">
-                  <span className="w-1.5 h-1.5 bg-white rounded-full animate-ping" />
-                </div>
-              </div>
-              <div>
-                <div className="flex items-center space-x-2">
-                  <span className="block text-base font-black text-white leading-tight">
-                    {preferences.displayName || 'Academic Student'}
-                  </span>
-                  <span className="text-[10px] bg-emerald-500/10 text-emerald-400 font-extrabold px-1.5 py-0.5 rounded-full border border-emerald-500/20 flex items-center space-x-1">
-                    <span className="w-1 h-1 bg-emerald-450 rounded-full" />
-                    <span>Online</span>
-                  </span>
-                </div>
-                <span className="block text-[11px] font-bold text-zinc-500 mt-0.5">
-                  @{preferences.syncUsername || 'local_user'}
-                </span>
-                <span className="text-[10px] text-zinc-400 font-bold block mt-1.5 flex items-center">
-                  <span className="mr-1.5">🏫</span> {preferences.collegeName || 'Not Set'}
-                </span>
-              </div>
-            </div>
-            
-            <button
-              onClick={() => { triggerHaptic('medium'); setShowCompleteProfileModal(true); }}
-              className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[10px] font-black text-indigo-400 rounded-xl transition cursor-pointer flex items-center space-x-1"
-            >
-              <span>Edit Profile</span>
-            </button>
-          </div>
 
-          {/* Academic Details Sub-grid */}
-          <div className="grid grid-cols-2 gap-2.5 pt-3 border-t border-white/5 text-[11px] font-semibold text-zinc-400 text-left">
-            <div className="bg-zinc-900/30 p-2 rounded-xl border border-white/5">
-              <span className="block text-[9px] uppercase tracking-wider text-zinc-500 font-black">Course</span>
-              <span className="text-white font-bold">{preferences.course || 'Not Set'}</span>
-            </div>
-            <div className="bg-zinc-900/30 p-2 rounded-xl border border-white/5">
-              <span className="block text-[9px] uppercase tracking-wider text-zinc-500 font-black">Department</span>
-              <span className="text-white font-bold">{preferences.major || 'Not Set'}</span>
-            </div>
-            <div className="bg-zinc-900/30 p-2 rounded-xl border border-white/5">
-              <span className="block text-[9px] uppercase tracking-wider text-zinc-500 font-black">Semester</span>
-              <span className="text-white font-bold">{preferences.semester || 'Not Set'}</span>
-            </div>
-            <div className="bg-zinc-900/30 p-2 rounded-xl border border-white/5">
-              <span className="block text-[9px] uppercase tracking-wider text-zinc-500 font-black">Section & Group</span>
-              <span className="text-white font-bold text-left">
-                {preferences.section || 'N/A'} • {preferences.group || 'N/A'}
-              </span>
-            </div>
-          </div>
-
-          {/* Footer: Last Sync status */}
-          <div className="flex justify-between items-center text-[10px] text-zinc-500 font-semibold pt-1">
-            <span>Cloud Sync Status</span>
-            <span className="flex items-center text-zinc-450 font-mono text-[9px]">
-              <Clock className="w-3 h-3 mr-1 text-zinc-650" />
-              {syncStatus.lastSynced 
-                ? `Synced ${new Date(syncStatus.lastSynced).toLocaleTimeString()}`
-                : 'Not Synced'
-              }
-            </span>
-          </div>
-        </div>
-      ) : (
-        <div className="relative overflow-hidden bg-gradient-to-br from-indigo-950/15 via-zinc-900/40 to-zinc-950 border border-white/5 rounded-3xl p-6 shadow-xl space-y-4 text-center">
-          <div className="absolute -top-12 -right-12 w-28 h-28 bg-indigo-500/5 rounded-full blur-2xl pointer-events-none" />
-          <div className="w-12 h-12 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-full flex items-center justify-center mx-auto">
-            <User className="w-6 h-6 animate-pulse" />
-          </div>
-          <div className="space-y-1">
-            <h3 className="text-base font-display font-black text-white">Create a Cloud Profile</h3>
-            <p className="text-xs text-zinc-400 max-w-[320px] mx-auto leading-relaxed">
-              Login or Register an account to configure your custom student ID card, connect with classmates, and automatically backup your attendance details.
-            </p>
-          </div>
-          <button
-            onClick={() => { triggerHaptic('medium'); setShowLoginModal(true); }}
-            className="w-full max-w-[240px] mx-auto py-2.5 bg-indigo-650 hover:bg-indigo-600 text-white rounded-xl text-xs font-bold transition flex items-center justify-center space-x-1.5 cursor-pointer shadow-lg shadow-indigo-650/15 animate-bounce"
-          >
-            <Sparkles className="w-4 h-4 text-indigo-350" />
-            <span>Login or Register</span>
-          </button>
-        </div>
-      )}
 
       {/* Target Attendance Settings */}
       <div className="glass-card p-5 border border-white/5 space-y-3.5">
@@ -660,192 +473,7 @@ export default function SettingsView({
         </div>
       </div>
 
-      {/* Cloud Account Login & Registration Panel */}
-      <div className="glass-card p-5 border border-white/5 space-y-4">
-        <h3 className="text-sm font-display font-bold text-zinc-150 flex items-center">
-          <Cloud className="w-4 h-4 mr-1.5 text-indigo-400" />
-          Cloud Login & Registration
-        </h3>
 
-        {!preferences.syncEnabled || !preferences.syncToken ? (
-          <div className="space-y-3">
-            <p className="text-xs text-zinc-400 leading-normal">
-              Register or log in to sync your attendance data across all devices, find class friends, and configure your student profile card.
-            </p>
-            <button
-              onClick={() => { triggerHaptic('medium'); setShowLoginModal(true); }}
-              className="w-full py-2.5 bg-indigo-650/40 hover:bg-indigo-600/40 border border-indigo-500/30 text-indigo-400 rounded-xl text-xs font-bold transition flex items-center justify-center space-x-1.5 cursor-pointer"
-            >
-              <Key className="w-4 h-4 mr-1.5" />
-              <span>Login / Register Account</span>
-            </button>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {/* Cloud Status Info */}
-            <div className="flex items-center justify-between bg-zinc-950/40 p-4 rounded-2xl border border-white/5">
-              <div>
-                <span className="block text-xs font-black text-zinc-350">
-                  Connected as <span className="text-indigo-400">@{preferences.syncUsername}</span>
-                </span>
-                {preferences.syncSessionExpired ? (
-                  <span className="text-[9px] text-rose-400 font-bold block mt-1">
-                    Session expired. Please sign in again.
-                  </span>
-                ) : (
-                  <span className="text-[9px] text-zinc-550 font-bold block mt-1">
-                    Last Synced: {syncStatus.lastSynced ? new Date(syncStatus.lastSynced).toLocaleTimeString() : 'Never'}
-                  </span>
-                )}
-              </div>
-              
-              {preferences.syncSessionExpired ? (
-                <button
-                  onClick={() => { triggerHaptic('medium'); setShowLoginModal(true); }}
-                  className="text-[8px] font-mono uppercase bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 px-2.5 py-1.5 rounded-full border border-rose-500/20 font-bold transition cursor-pointer"
-                >
-                  Re-auth
-                </button>
-              ) : (
-                <span className="text-[8px] font-mono uppercase bg-emerald-500/10 text-emerald-400 px-2.5 py-0.5 rounded-full border border-emerald-500/20 font-bold flex items-center">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse mr-1.5" />
-                  Active
-                </span>
-              )}
-            </div>
-
-            {/* Status indicators */}
-            {syncStatus.error && (
-              <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-3 text-rose-400 text-[10px] font-bold">
-                Sync error: {syncStatus.error}
-              </div>
-            )}
-
-            {/* Action grid */}
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => { triggerHaptic('medium'); syncService.performSync(); }}
-                disabled={syncStatus.isSyncing}
-                className="py-2 bg-zinc-900 hover:bg-zinc-850 text-zinc-300 rounded-lg text-[10px] font-bold transition cursor-pointer flex items-center justify-center space-x-1 border border-zinc-800 disabled:opacity-50"
-              >
-                <RefreshCw className={`w-3 h-3 ${syncStatus.isSyncing ? 'animate-spin text-indigo-400' : ''}`} />
-                <span>{syncStatus.isSyncing ? 'Syncing...' : 'Sync Now'}</span>
-              </button>
-              <button
-                onClick={() => { triggerHaptic('medium'); setShowFriendsModal(true); }}
-                className="py-2 bg-zinc-900 hover:bg-zinc-850 text-zinc-300 rounded-lg text-[10px] font-bold transition cursor-pointer flex items-center justify-center space-x-1 border border-zinc-800"
-              >
-                <Users className="w-3 h-3 text-indigo-400" />
-                <span>Friends & Social</span>
-              </button>
-              <button
-                onClick={() => { triggerHaptic('medium'); setShowConnectedDevicesModal(true); }}
-                className="py-2 bg-zinc-900 hover:bg-zinc-850 text-zinc-300 rounded-lg text-[10px] font-bold transition cursor-pointer flex items-center justify-center space-x-1 border border-zinc-800"
-              >
-                <Smartphone className="w-3 h-3 text-indigo-400" />
-                <span>Devices</span>
-              </button>
-              <button
-                onClick={async () => { triggerHaptic('heavy'); await syncService.logout(); }}
-                className="py-2 bg-rose-955/15 hover:bg-rose-955/25 text-rose-455 rounded-lg text-[10px] font-bold transition cursor-pointer flex items-center justify-center space-x-1 border border-rose-900/20"
-              >
-                <LogOut className="w-3 h-3 text-rose-500 mr-1" />
-                <span>Logout</span>
-              </button>
-            </div>
-
-            {/* Change Password & Delete Account Section */}
-            <div className="pt-2 border-t border-zinc-900/40 space-y-2">
-              <button
-                onClick={() => {
-                  triggerHaptic('medium');
-                  setShowChangePasswordModal(true);
-                  setOldPassword('');
-                  setNewPassword('');
-                  setConfirmNewPassword('');
-                  setPasswordError('');
-                  setPasswordSuccess('');
-                  setUpdateSecurityClue(false);
-                  setSecurityQuestion(PRESET_QUESTIONS[0]);
-                  setCustomQuestion('');
-                  setIsCustomQuestion(false);
-                  setSecurityAnswer('');
-                }}
-                className="w-full py-2 bg-zinc-900/40 hover:bg-zinc-800/40 border border-dashed border-zinc-805 text-zinc-300 rounded-lg text-[10px] font-bold transition flex items-center justify-center space-x-1 cursor-pointer"
-              >
-                <Key className="w-3 h-3 text-indigo-400 mr-1" />
-                <span>Change Cloud Password</span>
-              </button>
-
-              <button
-                onClick={() => { triggerHaptic('heavy'); setShowDeleteConfirm(true); setDeletePassword(''); setDeleteError(''); }}
-                className="w-full py-2 bg-rose-955/5 hover:bg-rose-955/10 border border-dashed border-rose-900/30 text-rose-455 rounded-lg text-[10px] font-bold transition flex items-center justify-center space-x-1 cursor-pointer"
-              >
-                <Trash2 className="w-3 h-3 text-rose-500 mr-1" />
-                <span>Delete Cloud Account</span>
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Timetable Vault / AI Wizard card */}
-      {onOpenWizard && (
-        hasVaultImage ? (
-          <div className="bg-gradient-to-br from-emerald-950/20 to-emerald-950/40 rounded-3xl p-5 border border-emerald-900/30 shadow-xs space-y-3.5">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-display font-bold text-white flex items-center">
-                <ShieldCheck className="w-4 h-4 mr-1.5 text-emerald-400" />
-                Timetable Vault
-              </h3>
-              <span className="text-[9px] font-mono font-black uppercase text-emerald-400 bg-emerald-950/45 px-1.5 py-0.5 rounded-md border border-emerald-900/30">
-                ACTIVE
-              </span>
-            </div>
-            <p className="text-xs text-emerald-200/80 leading-relaxed">
-              Your original timetable photo is securely saved locally. You can view it anytime or re-run the AI analysis if your classes update.
-            </p>
-            <div className="flex space-x-2">
-              <button
-                onClick={() => { triggerHaptic('light'); setShowVaultViewer(true); }}
-                className="flex-1 py-3 bg-emerald-950/50 hover:bg-emerald-900/50 border border-emerald-900/50 text-emerald-300 rounded-2xl text-xs font-bold transition flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs"
-              >
-                <ImageIcon className="w-4 h-4" />
-                <span>View Image</span>
-              </button>
-              <button
-                onClick={() => { triggerHaptic('heavy'); onOpenWizard(); }}
-                className="flex-[1.5] py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-black transition flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs"
-              >
-                <Sparkles className="w-4 h-4 text-emerald-100" />
-                <span>Reparse With AI</span>
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="bg-gradient-to-br from-indigo-950/20 to-indigo-950/40 rounded-3xl p-5 border border-indigo-900/30 shadow-xs space-y-3.5">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-display font-bold text-white flex items-center">
-                <Sparkles className="w-4 h-4 mr-1.5 text-indigo-400 animate-pulse" />
-                AI Timetable Assistant
-              </h3>
-              <span className="text-[9px] font-mono font-black uppercase text-indigo-400 bg-indigo-950/45 px-1.5 py-0.5 rounded-md border border-indigo-900/30">
-                Gemini AI
-              </span>
-            </div>
-            <p className="text-xs text-indigo-200 leading-relaxed">
-              Quickly import your entire college syllabus and class timetable! Upload a picture of your timetable or paste the schedule text to let Gemini AI auto-configure your BunkMate curriculum.
-            </p>
-            <button
-              onClick={() => { triggerHaptic('heavy'); onOpenWizard(); }}
-              className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xs font-black transition flex items-center justify-center space-x-2 cursor-pointer shadow-xs"
-            >
-              <Sparkles className="w-4 h-4 text-indigo-100 animate-bounce" />
-              <span>Launch AI Setup Assistant</span>
-            </button>
-          </div>
-        )
-      )}
 
       {/* Smart Notification Scheduler Panel */}
       <div className="glass-card p-5 border border-white/5 space-y-4">
@@ -1028,17 +656,6 @@ export default function SettingsView({
                         />
                       </div>
                     </div>
-
-                    {onOpenWizard && (
-                      <button
-                        onClick={() => { triggerHaptic('medium'); onOpenWizard(); }}
-                        className="px-2.5 py-1.5 bg-indigo-950/40 hover:bg-indigo-900/40 text-indigo-400 rounded-lg flex items-center space-x-1.5 text-[10px] font-bold border border-indigo-900/20 transition cursor-pointer"
-                        title="AI Timetable Setup Wizard"
-                      >
-                        <Sparkles className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
-                        <span>AI Setup</span>
-                      </button>
-                    )}
                   </motion.div>
                 )}
               </div>
@@ -1087,6 +704,44 @@ export default function SettingsView({
                   }`}
               />
             </button>
+          </div>
+        </div>
+      </div>
+
+
+
+      {/* App Updates */}
+      <div className="glass-card p-5 border border-white/5 space-y-4">
+        <h3 className="text-sm font-display font-bold text-zinc-150 flex items-center">
+          <Download className="w-4 h-4 mr-1.5 text-indigo-400" />
+          App Updates & Version Info
+        </h3>
+
+        <div className="space-y-4 text-left">
+          {/* Current version info */}
+          <div className="flex justify-between items-center bg-zinc-950/40 px-4 py-3 rounded-2xl border border-white/5">
+            <div>
+              <span className="block text-xs font-black text-zinc-350">BunkMate Version</span>
+              <span className="text-[10px] text-zinc-550 font-bold block mt-0.5">Installed on this device</span>
+            </div>
+            <span className="text-xs font-mono font-black text-indigo-400 bg-indigo-950/40 px-3 py-1.5 rounded-xl border border-indigo-900/30">
+              v{appVersion}
+            </span>
+          </div>
+
+          {/* Action Button */}
+          <div className="pt-2 border-t border-zinc-900/40">
+            {onOpenUpdates && (
+              <button
+                onClick={() => {
+                  triggerHaptic('light');
+                  onOpenUpdates();
+                }}
+                className="w-full py-2.5 bg-indigo-650 hover:bg-indigo-600 text-white rounded-xl text-xs font-black transition flex items-center justify-center space-x-1.5 cursor-pointer shadow-lg shadow-indigo-650/15"
+              >
+                <span>📢 Open App Updates Screen</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1486,37 +1141,7 @@ export default function SettingsView({
         )}
       </AnimatePresence>
 
-      {/* Cloud Sign In Drawer Modal */}
-      <AnimatePresence>
-        {showLoginModal && (
-          <LoginModal
-            onClose={() => setShowLoginModal(false)}
-            onSuccess={(action) => {
-              setShowLoginModal(false);
-              onUpdatePreferences(db.getPrefs());
-              if (onRefreshNotifications) onRefreshNotifications();
-              
-              // Automatically switch to Settings tab (showing their profile card)
-              if (onTabChange) {
-                onTabChange('settings');
-              }
 
-              // Show the beautiful success dialog popup
-              setSuccessPopup({ show: true, type: action });
-              
-              // Show Complete Profile immediately after account creation/registration
-              if (action === 'register') {
-                setShowCompleteProfileModal(true);
-              } else {
-                const currentPrefs = db.getPrefs();
-                if (!currentPrefs.profilePrompted && (!currentPrefs.displayName || currentPrefs.displayName === 'Academic Student')) {
-                  setShowCompleteProfileModal(true);
-                }
-              }
-            }}
-          />
-        )}
-      </AnimatePresence>
 
       {/* Custom Success Popup */}
       <AnimatePresence>
@@ -1567,302 +1192,8 @@ export default function SettingsView({
         )}
       </AnimatePresence>
 
-      {/* Friends & Social Dashboard Modal */}
-      <AnimatePresence>
-        {showFriendsModal && (
-          <FriendsModal
-            onClose={() => setShowFriendsModal(false)}
-          />
-        )}
-      </AnimatePresence>
 
-      {/* Full-Screen Vault Viewer Overlay */}
-      <AnimatePresence>
-        {showVaultViewer && savedImageBase64 && (
-          <motion.div 
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/95 z-[100] flex flex-col items-center justify-center"
-          >
-            <div className="absolute top-0 inset-x-0 p-4 bg-gradient-to-b from-black/80 to-transparent flex justify-between items-center z-10">
-              <div className="flex space-x-2">
-                <button onClick={() => setVaultZoom(z => Math.min(z + 0.5, 4))} className="p-2 bg-zinc-800/80 rounded-full text-white cursor-pointer">
-                  <ZoomIn className="w-5 h-5" />
-                </button>
-                <button onClick={() => setVaultZoom(z => Math.max(z - 0.5, 0.5))} className="p-2 bg-zinc-800/80 rounded-full text-white cursor-pointer">
-                  <ZoomOut className="w-5 h-5" />
-                </button>
-              </div>
-              <button onClick={() => { setShowVaultViewer(false); setVaultZoom(1); }} className="p-2 bg-zinc-800/80 rounded-full text-white cursor-pointer">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="w-full h-full overflow-auto flex items-center justify-center">
-              <img 
-                src={savedImageBase64} 
-                alt="Vault" 
-                style={{ transform: `scale(${vaultZoom})`, transition: 'transform 0.2s', transformOrigin: 'center' }}
-                className="max-w-none shadow-2xl" 
-              />
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
-      {/* Connected Devices Modal */}
-      <AnimatePresence>
-        {showConnectedDevicesModal && (
-          <ConnectedDevicesModal
-            onClose={() => setShowConnectedDevicesModal(false)}
-            username={preferences.syncUsername || 'User'}
-          />
-        )}
-      </AnimatePresence>
-
-      {/* Confirm Delete Cloud Account */}
-      <AnimatePresence>
-        {showDeleteConfirm && (
-          <div className="fixed inset-0 bg-black/85 z-[60] flex items-center justify-center p-6 text-center select-none backdrop-blur-md">
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="glass-card p-6 w-full max-w-[320px] shadow-2xl border border-white/5 space-y-4"
-            >
-              <div className="w-12 h-12 bg-rose-955/20 text-rose-455 rounded-full flex items-center justify-center mx-auto border border-rose-900/30">
-                <Trash2 className="w-6 h-6" />
-              </div>
-              <h4 className="text-base font-display font-bold text-white">Delete Cloud Account?</h4>
-              <p className="text-zinc-400 text-xs leading-relaxed">
-                This will delete your cloud account and all synced data permanently. This cannot be undone. Enter your password to confirm:
-              </p>
-              
-              {deleteError && (
-                <div className="text-[10px] text-rose-400 font-bold bg-rose-950/40 p-2 rounded-lg border border-rose-900/20">
-                  {deleteError}
-                </div>
-              )}
-
-              <input
-                type="password"
-                disabled={isDeleting}
-                value={deletePassword}
-                onChange={e => setDeletePassword(e.target.value)}
-                placeholder="Enter password..."
-                className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 text-white rounded-lg focus:outline-none focus:border-indigo-500 text-xs font-bold text-center placeholder:text-zinc-650"
-              />
-
-              <div className="flex space-x-3 pt-2">
-                <button
-                  disabled={isDeleting}
-                  onClick={() => {
-                    triggerHaptic('light');
-                    setShowDeleteConfirm(false);
-                    setDeletePassword('');
-                    setDeleteError('');
-                  }}
-                  className="flex-1 py-2 text-xs font-semibold bg-zinc-900 text-zinc-300 rounded-lg transition cursor-pointer disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  disabled={isDeleting || !deletePassword}
-                  onClick={handleDeleteAccount}
-                  className="flex-1 py-2 text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white rounded-lg shadow-sm transition cursor-pointer flex items-center justify-center space-x-1.5 disabled:opacity-50"
-                >
-                  {isDeleting ? (
-                    <>
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Deleting...</span>
-                    </>
-                  ) : (
-                    <span>Delete Account</span>
-                  )}
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Confirm Change Cloud Password */}
-      <AnimatePresence>
-        {showChangePasswordModal && (
-          <div className="fixed inset-0 bg-black/85 z-[60] flex items-center justify-center p-6 text-center select-none backdrop-blur-md">
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="glass-card p-6 w-full max-w-[320px] shadow-2xl border border-white/5 space-y-4 text-left"
-            >
-              <div className="w-12 h-12 bg-indigo-950/40 text-indigo-400 rounded-full flex items-center justify-center mx-auto border border-indigo-900/30">
-                <Key className="w-6 h-6 animate-pulse" />
-              </div>
-              <h4 className="text-base font-display font-bold text-white text-center">Change Cloud Password</h4>
-              <p className="text-zinc-400 text-xs leading-relaxed text-center">
-                Please enter your current password and your new password below.
-              </p>
-              
-              {passwordError && (
-                <div className="text-[10px] text-rose-405 font-bold bg-rose-950/40 p-2.5 rounded-xl border border-rose-900/20 text-center">
-                  {passwordError}
-                </div>
-              )}
-
-              {passwordSuccess && (
-                <div className="text-[10px] text-emerald-400 font-bold bg-emerald-950/40 p-2.5 rounded-xl border border-emerald-900/20 text-center">
-                  {passwordSuccess}
-                </div>
-              )}
-
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-[9px] uppercase tracking-wider text-zinc-500 font-black mb-1">Current Password</label>
-                  <input
-                    type="password"
-                    disabled={isUpdatingPassword}
-                    value={oldPassword}
-                    onChange={e => setOldPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full px-3.5 py-2.5 bg-zinc-950 border border-zinc-800 text-white rounded-xl focus:outline-none focus:border-indigo-500 text-xs font-bold"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[9px] uppercase tracking-wider text-zinc-500 font-black mb-1">New Password</label>
-                  <input
-                    type="password"
-                    disabled={isUpdatingPassword}
-                    value={newPassword}
-                    onChange={e => setNewPassword(e.target.value)}
-                    placeholder="Minimum 6 characters"
-                    className="w-full px-3.5 py-2.5 bg-zinc-950 border border-zinc-800 text-white rounded-xl focus:outline-none focus:border-indigo-500 text-xs font-bold"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[9px] uppercase tracking-wider text-zinc-500 font-black mb-1">Confirm New Password</label>
-                  <input
-                    type="password"
-                    disabled={isUpdatingPassword}
-                    value={confirmNewPassword}
-                    onChange={e => setConfirmNewPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full px-3.5 py-2.5 bg-zinc-950 border border-zinc-800 text-white rounded-xl focus:outline-none focus:border-indigo-500 text-xs font-bold"
-                  />
-                </div>
-
-                <div className="pt-2 border-t border-zinc-900 space-y-2">
-                  <label className="flex items-center space-x-2 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      disabled={isUpdatingPassword}
-                      checked={updateSecurityClue}
-                      onChange={e => setUpdateSecurityClue(e.target.checked)}
-                      className="w-4 h-4 rounded border-zinc-800 bg-zinc-950 text-indigo-650 focus:ring-indigo-500 cursor-pointer"
-                    />
-                    <span className="text-[10px] font-black text-indigo-405 uppercase tracking-wider">Update Security Question (Clue)</span>
-                  </label>
-
-                  {updateSecurityClue && (
-                    <div className="space-y-3 pt-1">
-                      <div>
-                        <label className="block text-[9px] uppercase tracking-wider text-zinc-500 font-black mb-1">Security Question</label>
-                        {!isCustomQuestion ? (
-                          <select
-                            disabled={isUpdatingPassword}
-                            value={securityQuestion}
-                            onChange={e => {
-                              if (e.target.value === 'custom') {
-                                setIsCustomQuestion(true);
-                              } else {
-                                setSecurityQuestion(e.target.value);
-                              }
-                            }}
-                            className="w-full bg-zinc-950 border border-zinc-805 rounded-xl py-2 px-3 text-xs font-bold text-white focus:outline-none focus:border-indigo-500 transition"
-                          >
-                            {PRESET_QUESTIONS.map((q, idx) => (
-                              <option key={idx} value={q}>{q}</option>
-                            ))}
-                            <option value="custom">Write custom question...</option>
-                          </select>
-                        ) : (
-                          <div className="space-y-1">
-                            <input
-                              type="text"
-                              disabled={isUpdatingPassword}
-                              value={customQuestion}
-                              onChange={e => setCustomQuestion(e.target.value)}
-                              placeholder="e.g. What is your favorite book?"
-                              className="w-full bg-zinc-950 border border-zinc-805 rounded-xl py-2 px-3 text-xs font-bold text-white focus:outline-none focus:border-indigo-500 transition"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setIsCustomQuestion(false)}
-                              className="text-[9px] font-semibold text-indigo-450 hover:text-indigo-400"
-                            >
-                              Use list instead
-                            </button>
-                          </div>
-                        )}
-                      </div>
-
-                      <div>
-                        <label className="block text-[9px] uppercase tracking-wider text-zinc-500 font-black mb-1">Answer Clue</label>
-                        <input
-                          type="text"
-                          disabled={isUpdatingPassword}
-                          value={securityAnswer}
-                          onChange={e => setSecurityAnswer(e.target.value)}
-                          placeholder="Your secure recovery answer"
-                          className="w-full px-3.5 py-2.5 bg-zinc-950 border border-zinc-800 text-white rounded-xl focus:outline-none focus:border-indigo-500 text-xs font-bold"
-                        />
-                        <p className="text-[8px] text-zinc-500 font-semibold px-1 mt-0.5">Answer is hashed and private.</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex space-x-3 pt-2">
-                <button
-                  disabled={isUpdatingPassword}
-                  onClick={() => {
-                    triggerHaptic('light');
-                    setShowChangePasswordModal(false);
-                    setOldPassword('');
-                    setNewPassword('');
-                    setConfirmNewPassword('');
-                    setPasswordError('');
-                    setPasswordSuccess('');
-                    setUpdateSecurityClue(false);
-                    setSecurityQuestion(PRESET_QUESTIONS[0]);
-                    setCustomQuestion('');
-                    setIsCustomQuestion(false);
-                    setSecurityAnswer('');
-                  }}
-                  className="flex-1 py-2.5 text-xs font-semibold bg-zinc-900 text-zinc-300 rounded-xl transition cursor-pointer disabled:opacity-50 text-center"
-                >
-                  Cancel
-                </button>
-                <button
-                  disabled={isUpdatingPassword || !oldPassword || !newPassword || !confirmNewPassword || (updateSecurityClue && (!securityAnswer || (!isCustomQuestion && !securityQuestion) || (isCustomQuestion && !customQuestion)))}
-                  onClick={handleChangePassword}
-                  className="flex-1 py-2.5 text-xs font-semibold bg-indigo-650 hover:bg-indigo-600 text-white rounded-xl shadow-sm transition cursor-pointer flex items-center justify-center space-x-1.5 disabled:opacity-50 text-center"
-                >
-                  {isUpdatingPassword ? (
-                    <>
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Updating...</span>
-                    </>
-                  ) : (
-                    <span>Update Password</span>
-                  )}
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }

@@ -53,6 +53,7 @@ export interface AppPreferences {
   syncLastSynced?: number;
   syncLastSyncedLocal?: number;
   syncSessionExpired?: boolean;
+  syncRecovered?: boolean;
   lastLoggedUserId?: string;
   displayName?: string;
   avatarId?: string;
@@ -63,6 +64,9 @@ export interface AppPreferences {
   section?: string;
   group?: string;
   profilePrompted?: boolean;
+  customUpdateManifestUrl?: string;
+  customDownloadUrlOverride?: string;
+  syncDatabaseMode?: 'supabase' | 'ephemeral';
 }
 
 export interface Exam {

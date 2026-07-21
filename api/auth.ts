@@ -38,7 +38,7 @@ export async function verifyTokenAndUser(token: string): Promise<{ userId: strin
       // If we are using local SQLite fallback in Vercel serverless environment, the user might
       // have registered on a different instance. Since the token signature is valid and secure,
       // we can trust it and auto-register the user on this instance's local database.
-      if (!process.env.TURSO_DATABASE_URL) {
+      if (!dbInstance.usingSupabase && !process.env.TURSO_DATABASE_URL) {
         console.warn(`[Auth] User ${user.username} not found in this instance database. Provisioning local record.`);
         await dbInstance.query(
           'INSERT OR IGNORE INTO users (id, username, passwordHash, salt, createdAt) VALUES (?, ?, ?, ?, ?)',
@@ -227,7 +227,13 @@ export default async function handler(req: any, res: any) {
       }
 
       const token = generateToken(userId, cleanUsername);
-      return sendJson(res, 200, { success: true, token, userId, username: cleanUsername });
+      return sendJson(res, 200, { 
+        success: true, 
+        token, 
+        userId, 
+        username: cleanUsername,
+        databaseMode: dbInstance.usingSupabase ? 'supabase' : 'ephemeral'
+      });
     } 
     
     if (action === 'login') {
@@ -242,7 +248,13 @@ export default async function handler(req: any, res: any) {
       }
 
       const token = generateToken(user.id, user.username);
-      return sendJson(res, 200, { success: true, token, userId: user.id, username: user.username });
+      return sendJson(res, 200, { 
+        success: true, 
+        token, 
+        userId: user.id, 
+        username: user.username,
+        databaseMode: dbInstance.usingSupabase ? 'supabase' : 'ephemeral'
+      });
     }
 
     if (action === 'delete') {

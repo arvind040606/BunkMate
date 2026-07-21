@@ -20,6 +20,7 @@ export class AttendanceRepository {
   }
 
   public static async save(record: AttendanceRecord): Promise<void> {
+    const nowTs = Date.now();
     await sqliteService.executeSql(
       'INSERT OR REPLACE INTO Attendance (id, subjectId, date, status, timestamp, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [
@@ -29,7 +30,7 @@ export class AttendanceRepository {
         record.status,
         record.timestamp,
         new Date().toISOString(),
-        new Date().toISOString()
+        nowTs
       ]
     );
   }

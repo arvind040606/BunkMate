@@ -135,6 +135,12 @@ export async function runSchemaMigrations(): Promise<void> {
       updatedAt TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS FriendAttendance (
+      username TEXT PRIMARY KEY,
+      stats TEXT NOT NULL,
+      updatedAt INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_attendance_subject ON Attendance (subjectId);
     CREATE INDEX IF NOT EXISTS idx_timetable_subject ON Timetable (subjectId);
     CREATE INDEX IF NOT EXISTS idx_exams_subject ON Exams (subjectId);

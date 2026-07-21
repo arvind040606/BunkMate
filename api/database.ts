@@ -1,5 +1,8 @@
 import path from 'path';
 import fs from 'fs';
+import dotenv from 'dotenv';
+dotenv.config();
+
 import { createClient as createLibsqlClient, type Client as LibsqlClient } from '@libsql/client';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 
@@ -44,9 +47,13 @@ export interface UserRecord {
 
 class DB {
   private client: LibsqlClient | null = null;
-  private supabase: any = null;
-  private usingSupabase: boolean = false;
+  public supabase: any = null;
+  public usingSupabase: boolean = false;
   private initPromise: Promise<void> | null = null;
+
+  public get isPersistent(): boolean {
+    return this.usingSupabase || !!TURSO_URL;
+  }
 
   constructor() {
     if (SUPABASE_URL && SUPABASE_ANON_KEY) {
@@ -209,6 +216,23 @@ class DB {
         FOREIGN KEY(userId) REFERENCES users(id) ON DELETE CASCADE
       );
 
+      -- latest_updates Table
+      CREATE TABLE IF NOT EXISTS latest_updates (
+        id TEXT PRIMARY KEY,
+        latest_version TEXT NOT NULL,
+        minimum_supported_version TEXT NOT NULL,
+        google_drive_apk_url TEXT NOT NULL,
+        release_notes TEXT,
+        release_date TEXT NOT NULL,
+        force_update INTEGER NOT NULL DEFAULT 0,
+        maintenance_mode INTEGER NOT NULL DEFAULT 0,
+        maintenance_message TEXT,
+        developer_email TEXT,
+        app_license TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       -- Indexes for performance
       CREATE INDEX IF NOT EXISTS idx_subjects_user ON subjects (userId);
       CREATE INDEX IF NOT EXISTS idx_timetable_subject ON timetable (subjectId);
@@ -243,7 +267,9 @@ class DB {
   // Base raw query executor
   public async query(sql: string, params: any[] = []): Promise<any[]> {
     if (this.usingSupabase) {
-      if (sql.includes('SELECT COUNT(*) as count FROM subjects WHERE userId = ?')) {
+      const normSql = sql.replace(/\s+/g, ' ').trim().toLowerCase();
+
+      if (normSql.includes('select count(*) as count from subjects where userid = ?')) {
         const { count, error } = await this.supabase
           .from('subjects')
           .select('*', { count: 'exact', head: true })
@@ -252,7 +278,7 @@ class DB {
         return [{ count: count || 0 }];
       }
 
-      if (sql.includes('SELECT id, username FROM users WHERE username LIKE ?')) {
+      if (normSql.includes('select id, username from users where username like ?')) {
         const likeParam = params[0].replace(/%/g, '');
         const userId = params[1];
         const { data, error } = await this.supabase
@@ -265,7 +291,7 @@ class DB {
         return data || [];
       }
 
-      if (sql.includes('SELECT id, username FROM users') && sql.includes('friends')) {
+      if (normSql.includes('select id, username from users') && normSql.includes('friends')) {
         const userId = params[0];
         const { data: friends } = await this.supabase
           .from('friends')
@@ -290,14 +316,14 @@ class DB {
         return users || [];
       }
 
-      if (sql.includes('FROM settings WHERE userId')) {
+      if (normSql.includes('from settings where userid')) {
         let query = this.supabase.from('settings').select('userId, key, value');
-        if (sql.includes('IN (')) {
+        if (normSql.includes('in (')) {
           query = query.in('userId', params);
         } else {
           query = query.eq('userId', params[0]);
         }
-        if (sql.includes('displayName')) {
+        if (normSql.includes('displayname')) {
           query = query.in('key', ['displayName', 'avatarId']);
         }
         const { data, error } = await query;
@@ -305,14 +331,15 @@ class DB {
         return data || [];
       }
 
-      if (sql.includes('INSERT OR IGNORE INTO users') || sql.includes('INSERT INTO users')) {
+      if (normSql.includes('insert or ignore into users') || normSql.includes('insert into users')) {
+        const ignoreDuplicates = normSql.includes('ignore');
         const { error } = await this.supabase.from('users').upsert([{
           id: params[0],
           username: params[1],
           passwordHash: params[2],
           salt: params[3],
           createdAt: params[4] || Date.now()
-        }]);
+        }], { onConflict: 'id', ignoreDuplicates });
         if (error) console.error('[Supabase insert user error]:', error.message);
         return [];
       }
@@ -333,7 +360,9 @@ class DB {
   // Base raw write/execute executor
   public async run(sql: string, params: any[] = []): Promise<void> {
     if (this.usingSupabase) {
-      if (sql.startsWith('UPDATE users SET passwordHash = ?')) {
+      const normSql = sql.replace(/\s+/g, ' ').trim().toLowerCase();
+
+      if (normSql.startsWith('update users set passwordhash =')) {
         const { error } = await this.supabase.from('users').update({
           passwordHash: params[0],
           salt: params[1],
@@ -344,12 +373,29 @@ class DB {
         if (error) console.error('[Supabase update password error]:', error.message);
         return;
       }
-      if (sql.startsWith('DELETE FROM friends')) {
+
+      if (normSql.startsWith('delete from friends')) {
         const { error } = await this.supabase
           .from('friends')
           .delete()
           .or(`and(senderId.eq.${params[0]},receiverId.eq.${params[1]}),and(senderId.eq.${params[2]},receiverId.eq.${params[3]})`);
         if (error) console.error('[Supabase delete friend error]:', error.message);
+        return;
+      }
+
+      if (normSql.startsWith('delete from users where id =')) {
+        const { error } = await this.supabase.from('users').delete().eq('id', params[0]);
+        if (error) console.error('[Supabase delete user error]:', error.message);
+        return;
+      }
+
+      if (normSql.startsWith('delete from') && normSql.includes('where userid =')) {
+        const match = normSql.match(/delete from\s+(\w+)\s+where/);
+        if (match && match[1]) {
+          const tableName = match[1];
+          const { error } = await this.supabase.from(tableName).delete().eq('userId', params[0]);
+          if (error) console.error(`[Supabase delete all from ${tableName} error]:`, error.message);
+        }
         return;
       }
     }
@@ -577,7 +623,7 @@ class DB {
   // DELTA SYNCHRONIZATION SUPPORT
   // ==========================================
 
-  public async deleteRecord(userId: string, table: string, recordId: string, deletedAt: number): Promise<void> {
+  public async deleteRecord(userId: string, table: string, recordId: string, deletedAt: number, serverSyncTime: number): Promise<void> {
     const allowedTables = ['subjects', 'attendance', 'assignments', 'exams', 'settings', 'timetable'];
     if (!allowedTables.includes(table)) return;
 
@@ -587,16 +633,20 @@ class DB {
       targetId = `settings-${userId}-${key}`;
     }
 
+    console.log(`[Sync DB] deleteRecord - user: ${userId}, table: ${table}, id: ${targetId}, deletedAt: ${deletedAt}, serverSyncTime: ${serverSyncTime}`);
+
     if (this.usingSupabase) {
-      await this.supabase.from(table).delete().eq('userId', userId).eq('id', targetId);
+      const { error: delErr } = await this.supabase.from(table).delete().eq('userId', userId).eq('id', targetId);
+      if (delErr) throw new Error(`[Supabase deleteRecord error for ${table}]: ${delErr.message}`);
       const delId = `${userId}-${table}-${targetId}`;
-      await this.supabase.from('sync_deletions').upsert([{
+      const { error: upsertErr } = await this.supabase.from('sync_deletions').upsert([{
         id: delId,
         userId,
         tableName: table,
         recordId: targetId,
-        deletedAt
+        deletedAt: serverSyncTime
       }]);
+      if (upsertErr) throw new Error(`[Supabase deleteRecord upsert sync_deletions error]: ${upsertErr.message}`);
       return;
     }
 
@@ -605,11 +655,11 @@ class DB {
     const delId = `${userId}-${table}-${targetId}`;
     await this.run(
       'INSERT OR REPLACE INTO sync_deletions (id, userId, tableName, recordId, deletedAt) VALUES (?, ?, ?, ?, ?)',
-      [delId, userId, table, targetId, deletedAt]
+      [delId, userId, table, targetId, serverSyncTime]
     );
   }
 
-  public async upsertRecord(userId: string, table: string, recordId: string, payload: any, updatedAt: number): Promise<void> {
+  public async upsertRecord(userId: string, table: string, recordId: string, payload: any, updatedAt: number, serverSyncTime: number): Promise<any> {
     const allowedTables = ['subjects', 'attendance', 'assignments', 'exams', 'settings', 'timetable'];
     if (!allowedTables.includes(table)) return;
 
@@ -618,6 +668,19 @@ class DB {
       const key = recordId.substring('settings-'.length);
       targetId = `settings-${userId}-${key}`;
     }
+
+    const getEpochTimestamp = (val: any) => {
+      if (!val) return Date.now();
+      if (typeof val === 'string') {
+        if (/^\d+$/.test(val)) return Number(val);
+        const parsed = Date.parse(val);
+        return isNaN(parsed) ? Date.now() : parsed;
+      }
+      if (typeof val === 'number') return val;
+      return Date.now();
+    };
+
+    console.log(`[Sync DB] upsertRecord - user: ${userId}, table: ${table}, id: ${targetId}, clientUpdatedAt: ${updatedAt}, serverSyncTime: ${serverSyncTime}`);
 
     if (this.usingSupabase) {
       const { data: deletionCheck } = await this.supabase
@@ -628,8 +691,9 @@ class DB {
         .eq('recordId', targetId)
         .maybeSingle();
 
-      if (deletionCheck && deletionCheck.deletedAt >= updatedAt) {
-        return;
+      if (deletionCheck && deletionCheck.deletedAt > updatedAt) {
+        console.log(`[Sync DB Skip] Table: ${table} | recordId: ${targetId} | Skipped because deletionCheck.deletedAt (${deletionCheck.deletedAt}) > client updatedAt (${updatedAt})`);
+        return { skipped: true, reason: 'deleted' };
       }
 
       const { data: existing } = await this.supabase
@@ -639,17 +703,19 @@ class DB {
         .eq('id', targetId)
         .maybeSingle();
 
-      if (existing && existing.updatedAt >= updatedAt) {
-        return;
+      if (existing && existing.updatedAt > updatedAt) {
+        console.log(`[Sync DB Skip] Table: ${table} | recordId: ${targetId} | Skipped because existing.updatedAt (${existing.updatedAt}) > client updatedAt (${updatedAt})`);
+        return { skipped: true, reason: 'newer_version_exists' };
       }
 
       if (deletionCheck) {
-        await this.supabase
+        const { error: delErr } = await this.supabase
           .from('sync_deletions')
           .delete()
           .eq('userId', userId)
           .eq('tableName', table)
           .eq('recordId', targetId);
+        if (delErr) throw new Error(`[Supabase upsertRecord deletionCheck cleanup error]: ${delErr.message}`);
       }
 
       let parsedPayload = payload;
@@ -661,9 +727,11 @@ class DB {
         }
       }
 
+      const effectiveUpdatedAt = updatedAt || serverSyncTime;
+
       if (table === 'subjects') {
         const { name, code, room, teacher, color, targetPercentage, isPinned, isArchived, icon, notes, initialPresent, initialAbsent, createdAt } = parsedPayload;
-        await this.supabase
+        const { error: subErr } = await this.supabase
           .from('subjects')
           .upsert([{
             id: recordId,
@@ -680,9 +748,10 @@ class DB {
             notes: notes || '',
             initialPresent: initialPresent || 0,
             initialAbsent: initialAbsent || 0,
-            createdAt: createdAt || new Date().toISOString(),
-            updatedAt
-          }]);
+            createdAt: getEpochTimestamp(createdAt),
+            updatedAt: effectiveUpdatedAt
+          }], { onConflict: 'id' });
+        if (subErr) throw new Error(`[Supabase subjects upsert error]: ${subErr.message}`);
 
         if (Array.isArray(parsedPayload.schedule)) {
           for (const entry of parsedPayload.schedule) {
@@ -694,7 +763,7 @@ class DB {
               .maybeSingle();
 
             if (!existingEntry || existingEntry.updatedAt < updatedAt) {
-              await this.supabase
+              const { error: ttErr } = await this.supabase
                 .from('timetable')
                 .upsert([{
                   id: entryId,
@@ -703,9 +772,10 @@ class DB {
                   dayOfWeek: entry.dayOfWeek,
                   time: entry.time,
                   duration: entry.duration || 60,
-                  createdAt: new Date().toISOString(),
-                  updatedAt
-                }]);
+                  createdAt: getEpochTimestamp(entry.createdAt),
+                  updatedAt: effectiveUpdatedAt
+                }], { onConflict: 'id' });
+              if (ttErr) throw new Error(`[Supabase timetable upsert error]: ${ttErr.message}`);
             }
           }
         }
@@ -713,7 +783,7 @@ class DB {
       
       else if (table === 'timetable') {
         const { subjectId, dayOfWeek, time, duration, createdAt } = parsedPayload;
-        await this.supabase
+        const { error: ttErr } = await this.supabase
           .from('timetable')
           .upsert([{
             id: recordId,
@@ -722,14 +792,38 @@ class DB {
             dayOfWeek,
             time,
             duration: duration || 60,
-            createdAt: createdAt || new Date().toISOString(),
-            updatedAt
-          }]);
+            createdAt: getEpochTimestamp(createdAt),
+            updatedAt: effectiveUpdatedAt
+          }], { onConflict: 'id' });
+        if (ttErr) throw new Error(`[Supabase timetable upsert error]: ${ttErr.message}`);
       } 
       
       else if (table === 'attendance') {
         const { subjectId, date, status, timestamp, createdAt } = parsedPayload;
-        await this.supabase
+
+        // Auto-heal missing subject record in Supabase to prevent Foreign Key constraint (code 23503) failures
+        if (subjectId) {
+          const { data: subCheck } = await this.supabase
+            .from('subjects')
+            .select('id')
+            .eq('id', subjectId)
+            .maybeSingle();
+
+          if (!subCheck) {
+            console.warn(`[Supabase Attendance FK Heal] Subject ${subjectId} missing in Supabase for user ${userId}. Auto-provisioning placeholder subject...`);
+            await this.supabase.from('subjects').upsert([{
+              id: subjectId,
+              userId,
+              name: 'General Subject',
+              code: '',
+              color: '#4F46E5',
+              targetPercentage: 75,
+              updatedAt: effectiveUpdatedAt
+            }], { onConflict: 'id' });
+          }
+        }
+
+        const { error: attErr } = await this.supabase
           .from('attendance')
           .upsert([{
             id: recordId,
@@ -738,14 +832,21 @@ class DB {
             date,
             status,
             timestamp,
-            createdAt: createdAt || new Date().toISOString(),
-            updatedAt
-          }]);
+            createdAt: getEpochTimestamp(createdAt),
+            updatedAt: effectiveUpdatedAt
+          }], { onConflict: 'id' });
+
+        if (attErr) {
+          console.error('[Supabase attendance upsert error]:', attErr.message, attErr.details, attErr.hint);
+          throw new Error(`[Supabase attendance upsert error]: ${attErr.message}`);
+        }
+        console.log(`[Supabase Attendance Success] Upserted attendance record for user: ${userId} | recordId: ${recordId} | date: ${date} | status: ${status}`);
+        return { success: true, recordId };
       } 
       
       else if (table === 'assignments') {
         const { subjectId, title, dueDate, dueTime, description, status, createdAt } = parsedPayload;
-        await this.supabase
+        const { error: asgErr } = await this.supabase
           .from('assignments')
           .upsert([{
             id: recordId,
@@ -756,14 +857,15 @@ class DB {
             dueTime: dueTime || '',
             description: description || '',
             status: status || 'pending',
-            createdAt: createdAt || new Date().toISOString(),
-            updatedAt
+            createdAt: getEpochTimestamp(createdAt),
+            updatedAt: serverSyncTime
           }]);
+        if (asgErr) throw new Error(`[Supabase assignments upsert error]: ${asgErr.message}`);
       } 
       
       else if (table === 'exams') {
         const { subjectId, title, date, time, syllabus, room, completed, createdAt } = parsedPayload;
-        await this.supabase
+        const { error: exErr } = await this.supabase
           .from('exams')
           .upsert([{
             id: recordId,
@@ -775,23 +877,25 @@ class DB {
             syllabus: syllabus || '',
             room: room || '',
             completed: completed ? 1 : 0,
-            createdAt: createdAt || new Date().toISOString(),
-            updatedAt
+            createdAt: getEpochTimestamp(createdAt),
+            updatedAt: serverSyncTime
           }]);
+        if (exErr) throw new Error(`[Supabase exams upsert error]: ${exErr.message}`);
       } 
       
       else if (table === 'settings') {
         const { key, value, createdAt } = parsedPayload;
-        await this.supabase
+        const { error: setErr } = await this.supabase
           .from('settings')
           .upsert([{
             id: targetId,
             userId,
             key,
             value: typeof value === 'string' ? value : JSON.stringify(value),
-            createdAt: createdAt || new Date().toISOString(),
-            updatedAt
+            createdAt: getEpochTimestamp(createdAt),
+            updatedAt: serverSyncTime
           }]);
+        if (setErr) throw new Error(`[Supabase settings upsert error]: ${setErr.message}`);
       }
       return;
     }
@@ -801,12 +905,14 @@ class DB {
       [userId, table, targetId]
     );
     if (deletionCheck.length > 0 && deletionCheck[0].deletedAt >= updatedAt) {
-      return;
+      console.log(`[Sync DB SQLite Skip] Table: ${table} | recordId: ${targetId} | Skipped because deletionCheck.deletedAt (${deletionCheck[0].deletedAt}) >= client updatedAt (${updatedAt})`);
+      return { skipped: true, reason: 'deleted' };
     }
 
     const existing = await this.query(`SELECT updatedAt FROM ${table} WHERE userId = ? AND id = ?`, [userId, targetId]);
     if (existing.length > 0 && existing[0].updatedAt >= updatedAt) {
-      return;
+      console.log(`[Sync DB SQLite Skip] Table: ${table} | recordId: ${targetId} | Skipped because existing.updatedAt (${existing[0].updatedAt}) >= client updatedAt (${updatedAt})`);
+      return { skipped: true, reason: 'newer_version_exists' };
     }
 
     if (deletionCheck.length > 0) {
@@ -834,7 +940,7 @@ class DB {
         [
           recordId, userId, name, code || '', room || '', teacher || '', color, targetPercentage || 75,
           isPinned ? 1 : 0, isArchived ? 1 : 0, icon || '', notes || '', initialPresent || 0, initialAbsent || 0,
-          createdAt || new Date().toISOString(), updatedAt
+          getEpochTimestamp(createdAt), serverSyncTime
         ]
       );
 
@@ -849,7 +955,7 @@ class DB {
               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
               [
                 entryId, userId, recordId, entry.dayOfWeek, entry.time, entry.duration || 60,
-                new Date().toISOString(), updatedAt
+                getEpochTimestamp(entry.createdAt), serverSyncTime
               ]
             );
           }
@@ -865,7 +971,7 @@ class DB {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           recordId, userId, subjectId, dayOfWeek, time, duration || 60,
-          createdAt || new Date().toISOString(), updatedAt
+          getEpochTimestamp(createdAt), serverSyncTime
         ]
       );
     } 
@@ -878,7 +984,7 @@ class DB {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           recordId, userId, subjectId, date, status, timestamp,
-          createdAt || new Date().toISOString(), updatedAt
+          getEpochTimestamp(createdAt), serverSyncTime
         ]
       );
     } 
@@ -891,7 +997,7 @@ class DB {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           recordId, userId, subjectId || null, title, dueDate, dueTime || '', description || '', status || 'pending',
-          createdAt || new Date().toISOString(), updatedAt
+          getEpochTimestamp(createdAt), serverSyncTime
         ]
       );
     } 
@@ -904,7 +1010,7 @@ class DB {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           recordId, userId, subjectId || null, title, date, time || '', syllabus || '', room || '',
-          completed ? 1 : 0, createdAt || new Date().toISOString(), updatedAt
+          completed ? 1 : 0, getEpochTimestamp(createdAt), serverSyncTime
         ]
       );
     } 
@@ -917,7 +1023,7 @@ class DB {
         ) VALUES (?, ?, ?, ?, ?, ?)`,
         [
           targetId, userId, key, typeof value === 'string' ? value : JSON.stringify(value),
-          createdAt || new Date().toISOString(), updatedAt
+          getEpochTimestamp(createdAt), serverSyncTime
         ]
       );
     }

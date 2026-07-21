@@ -50,11 +50,12 @@ export default async function handler(req: any, res: any) {
 
   const { lastSynced = 0, changes = [] } = body;
 
+  const serverSyncTime = Date.now();
   console.log(`[Sync Request] User: ${user.username} (UserId: ${user.userId}) | lastSynced: ${lastSynced} | changes count: ${changes.length}`);
 
   try {
     // Check if user has 0 subjects on server but client has > 0 subjects locally and thinks it is already synced
-    if (lastSynced > 0 && (!changes || changes.length === 0)) {
+    if (dbInstance.isPersistent && lastSynced > 0 && (!changes || changes.length === 0)) {
       const localSubjectCount = body.localSubjectCount !== undefined ? Number(body.localSubjectCount) : 0;
       if (localSubjectCount > 0) {
         const serverSubjectCount = await dbInstance.query('SELECT COUNT(*) as count FROM subjects WHERE userId = ?', [user.userId]);
@@ -63,7 +64,7 @@ export default async function handler(req: any, res: any) {
           console.log(`[Sync Self-Heal] User ${user.username} has 0 subjects on server but client has ${localSubjectCount} subjects and lastSynced is ${lastSynced}. Requesting sync reset.`);
           return sendJson(res, 200, {
             success: true,
-            syncTime: Date.now(),
+            syncTime: serverSyncTime,
             changes: [],
             resetSync: true
           });
@@ -72,31 +73,56 @@ export default async function handler(req: any, res: any) {
     }
 
     // 1. Process outbound client changes (Uploads)
+    let attendanceUploaded = 0;
+    let attendanceSkipped = 0;
+
     if (Array.isArray(changes)) {
-      for (const change of changes) {
+      // Sort changes so 'subjects' are processed FIRST before dependent tables (attendance, timetable, etc.)
+      const tableOrder: Record<string, number> = {
+        'subjects': 1,
+        'timetable': 2,
+        'attendance': 3,
+        'exams': 4,
+        'assignments': 5,
+        'settings': 6
+      };
+      const sortedChanges = [...changes].sort((a, b) => {
+        const orderA = tableOrder[a.table] || 99;
+        const orderB = tableOrder[b.table] || 99;
+        return orderA - orderB;
+      });
+
+      for (const change of sortedChanges) {
         const { table, recordId, payload, updatedAt, isDeleted } = change;
         if (
           ['subjects', 'attendance', 'assignments', 'exams', 'settings', 'timetable'].includes(table) &&
           recordId &&
           typeof updatedAt === 'number'
         ) {
-          console.log(`  -> Processing table: ${table} | recordId: ${recordId} | isDeleted: ${!!isDeleted} | updatedAt: ${updatedAt}`);
+          console.log(`  -> Processing table: ${table} | recordId: ${recordId} | isDeleted: ${!!isDeleted} | updatedAt: ${updatedAt} | serverSyncTime: ${serverSyncTime}`);
           if (isDeleted) {
-            await dbInstance.deleteRecord(user.userId, table, recordId, updatedAt);
+            await dbInstance.deleteRecord(user.userId, table, recordId, updatedAt, serverSyncTime);
           } else if (payload) {
-            await dbInstance.upsertRecord(user.userId, table, recordId, payload, updatedAt);
+            const res = await dbInstance.upsertRecord(user.userId, table, recordId, payload, updatedAt, serverSyncTime);
+            if (table === 'attendance') {
+              if (res && (res as any).skipped) {
+                attendanceSkipped++;
+              } else {
+                attendanceUploaded++;
+              }
+            }
           }
         } else {
           console.warn(`  -> Ignored invalid client change:`, change);
         }
       }
+      console.log(`[Sync Upload Summary] User: ${user.username} | Total changes: ${changes.length} | Attendance uploaded: ${attendanceUploaded} | Attendance skipped: ${attendanceSkipped}`);
     }
 
     // 2. Fetch server-side changes since lastSynced (Downloads)
     const serverChanges = await dbInstance.getChanges(user.userId, lastSynced);
-    const syncTime = Date.now();
 
-    console.log(`[Sync Success] User: ${user.username} | returning ${serverChanges.length} server changes | syncTime: ${syncTime}`);
+    console.log(`[Sync Success] User: ${user.username} | returning ${serverChanges.length} server changes | syncTime: ${serverSyncTime}`);
 
     if (changes && changes.length > 0 && typeof (globalThis as any).broadcastUserUpdate === 'function') {
       (globalThis as any).broadcastUserUpdate(user.userId, user.username);
@@ -104,8 +130,11 @@ export default async function handler(req: any, res: any) {
 
     return sendJson(res, 200, {
       success: true,
-      syncTime,
-      changes: serverChanges
+      syncTime: serverSyncTime,
+      changes: serverChanges,
+      attendanceUploaded,
+      attendanceSkipped,
+      databaseMode: dbInstance.usingSupabase ? 'supabase' : 'ephemeral'
     });
   } catch (error: any) {
     console.error('[Sync Error] Sync execution failure:', error);

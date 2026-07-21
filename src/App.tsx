@@ -9,7 +9,11 @@ import {
   Wifi,
   Battery,
   Signal,
-  Bell
+  Bell,
+  Users,
+  Bot,
+  User,
+  Sparkles
 } from 'lucide-react';
 
 import { Subject, AttendanceRecord, AppPreferences, NotificationItem } from './types';
@@ -25,6 +29,7 @@ import CalendarView from './components/views/CalendarView';
 import SubjectsView from './components/views/SubjectsView';
 import AnalyticsView from './components/views/AnalyticsView';
 import SettingsView from './components/views/SettingsView';
+import ProfileView from './components/views/ProfileView';
 
 // Security and overlays
 import SecurityPinView from './components/views/SecurityPinView';
@@ -32,11 +37,14 @@ import AddSubjectModal from './components/views/AddSubjectModal';
 import SubjectDetailModal from './components/views/SubjectDetailModal';
 import InAppNotifications from './components/views/InAppNotifications';
 import TimetableWizardModal from './components/views/TimetableWizardModal';
-import FriendsModal from './components/views/FriendsModal';
+import FriendsView from './components/views/FriendsView';
 import CompleteProfileModal from './components/views/CompleteProfileModal';
 import LoginModal from './components/views/LoginModal';
+import UpdateModal from './components/views/UpdateModal';
+import { UpdateScreen } from './components/views/UpdateScreen';
+import { updateService, VersionInfo } from './utils/updateService';
 
-type Tab = 'home' | 'calendar' | 'subjects' | 'analytics' | 'settings';
+type Tab = 'home' | 'subjects' | 'calendar' | 'friends' | 'ai' | 'profile';
 
 export default function App() {
   // Database States
@@ -94,12 +102,18 @@ export default function App() {
   const [subjectToEdit, setSubjectToEdit] = useState<Subject | undefined>(undefined);
   const [showNotifications, setShowNotifications] = useState<boolean>(false);
   const [showWizard, setShowWizard] = useState<boolean>(false);
-  const [showFriendsModal, setShowFriendsModal] = useState<boolean>(false);
+  const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
   const [showCompleteProfile, setShowCompleteProfile] = useState<boolean>(false);
   const [pendingRequestsCount, setPendingRequestsCount] = useState<number>(0);
   const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
   const [loginSuccessCallback, setLoginSuccessCallback] = useState<((action: 'login' | 'register') => void) | null>(null);
   const [pendingImportSubjects, setPendingImportSubjects] = useState<Subject[] | null>(null);
+
+  // App updates state
+  const [showUpdateModal, setShowUpdateModal] = useState<boolean>(false);
+  const [updateInfo, setUpdateInfo] = useState<VersionInfo | null>(null);
+  const [currentAppVersion, setCurrentAppVersion] = useState<string>('1.0.0');
+  const [showUpdateScreen, setShowUpdateScreen] = useState<boolean>(false);
 
   const handleOpenWizard = () => {
     triggerHaptic('medium');
@@ -190,6 +204,34 @@ export default function App() {
     return () => {
       unsubscribe();
     };
+  }, []);
+
+  // Check for app updates on launch and set a 12-hour background interval
+  useEffect(() => {
+    const runUpdateCheck = async (isLaunch: boolean) => {
+      try {
+        const ver = await updateService.getAppVersion();
+        setCurrentAppVersion(ver);
+        
+        const check = await updateService.checkForUpdates(isLaunch);
+        if (check.updateAvailable && check.info) {
+          setUpdateInfo(check.info);
+          setShowUpdateModal(true);
+        }
+      } catch (err) {
+        console.error('[App] Startup/periodic update check error:', err);
+      }
+    };
+
+    // Check immediately on app launch (forced network fetch)
+    runUpdateCheck(true);
+
+    // Schedule subsequent checks every 12 hours while the app is active
+    const updateTimer = setInterval(() => {
+      runUpdateCheck(false); // throttled check
+    }, 12 * 60 * 60 * 1000);
+
+    return () => clearInterval(updateTimer);
   }, []);
 
   // Update dynamic clock for the smartphone status bar
@@ -680,23 +722,13 @@ export default function App() {
                   onSelectSubject={(subj) => setSelectedSubject(subj)}
                   onOpenWizard={handleOpenWizard}
                   onScroll={handleViewScroll}
-                  onOpenFriends={() => setShowFriendsModal(true)}
+                  onOpenFriends={() => handleTabChange('friends')}
                   pendingFriendsCount={pendingRequestsCount}
                   onOpenLoginModal={() => {
                     triggerHaptic('medium');
                     setLoginSuccessCallback(null);
                     setShowLoginModal(true);
                   }}
-                />
-              )}
-              {currentTab === 'calendar' && (
-                <CalendarView
-                  subjects={subjects}
-                  records={records}
-                  onLogAttendance={handleLogAttendance}
-                  onDeleteRecord={handleDeleteRecord}
-                  onRefreshNotifications={() => setNotifications(db.getNotifications())}
-                  onScroll={handleViewScroll}
                 />
               )}
               {currentTab === 'subjects' && (
@@ -708,24 +740,47 @@ export default function App() {
                   onScroll={handleViewScroll}
                 />
               )}
-              {currentTab === 'analytics' && (
-                <AnalyticsView
+              {currentTab === 'calendar' && (
+                <CalendarView
                   subjects={subjects}
                   records={records}
+                  onLogAttendance={handleLogAttendance}
+                  onDeleteRecord={handleDeleteRecord}
                   onScroll={handleViewScroll}
                 />
               )}
-              {currentTab === 'settings' && (
-                <SettingsView
-                  preferences={preferences}
-                  onUpdatePreferences={handleUpdatePreferences}
-                  onImportData={handleImportBackup}
+              {currentTab === 'friends' && (
+                <FriendsView
+                  onOpenLogin={() => {
+                    triggerHaptic('medium');
+                    setLoginSuccessCallback(null);
+                    setShowLoginModal(true);
+                  }}
+                  onScroll={handleViewScroll}
+                />
+              )}
+              {currentTab === 'ai' && (
+                <AnalyticsView
                   subjects={subjects}
                   records={records}
-                  onRefreshNotifications={() => setNotifications(db.getNotifications())}
-                  onOpenWizard={handleOpenWizard}
+                  onAddSubject={handleSaveSubject}
                   onScroll={handleViewScroll}
-                  onTabChange={handleTabChange}
+                  onOpenWizard={handleOpenWizard}
+                />
+              )}
+              {currentTab === 'profile' && (
+                <ProfileView
+                  preferences={preferences}
+                  onEditProfile={() => setShowCompleteProfile(true)}
+                  onOpenLogin={() => {
+                    triggerHaptic('medium');
+                    setLoginSuccessCallback(null);
+                    setShowLoginModal(true);
+                  }}
+                  onOpenSettings={() => setShowSettingsModal(true)}
+                  onOpenUpdates={() => setShowUpdateScreen(true)}
+                  onUpdatePreferences={handleUpdatePreferences}
+                  onViewScroll={handleViewScroll}
                 />
               )}
             </motion.div>
@@ -736,7 +791,7 @@ export default function App() {
         <div className={`absolute bottom-[calc(1.25rem+env(safe-area-inset-bottom,16px))] left-4 right-4 bg-zinc-950/60 backdrop-blur-xl border border-white/10 rounded-full flex justify-around items-center z-40 py-2 px-1 shadow-2xl transition-all duration-300 ${
           isTabBarVisible ? 'translate-y-0 opacity-100' : 'translate-y-28 opacity-0 pointer-events-none'
         }`}>
-          {(['home', 'calendar', 'subjects', 'analytics', 'settings'] as const).map((tab) => {
+          {(['home', 'subjects', 'calendar', 'friends', 'ai', 'profile'] as const).map((tab) => {
             const isActive = currentTab === tab;
             return (
               <button
@@ -754,17 +809,27 @@ export default function App() {
                 )}
 
                 {/* Tab Icon Selection */}
-                <div className={`transition-all duration-200 transform ${isActive ? 'text-indigo-400 scale-110' : 'text-zinc-500 group-hover:text-zinc-300'}`}>
+                <div className={`transition-all duration-200 transform relative ${isActive ? 'text-indigo-400 scale-110' : 'text-zinc-500 group-hover:text-zinc-300'}`}>
                   {tab === 'home' && <HomeIcon className="w-5.5 h-5.5" />}
-                  {tab === 'calendar' && <CalendarIcon className="w-5.5 h-5.5" />}
                   {tab === 'subjects' && <BookOpen className="w-5.5 h-5.5" />}
-                  {tab === 'analytics' && <BarChart3 className="w-5.5 h-5.5" />}
-                  {tab === 'settings' && <SettingsIcon className="w-5.5 h-5.5" />}
+                  {tab === 'calendar' && <CalendarIcon className="w-5.5 h-5.5" />}
+                  {tab === 'friends' && (
+                    <>
+                      <Users className="w-5.5 h-5.5" />
+                      {pendingRequestsCount > 0 && (
+                        <span className="absolute -top-1 -right-1.5 w-4 h-4 bg-indigo-500 text-white font-extrabold text-[9px] rounded-full flex items-center justify-center border-2 border-zinc-950">
+                          {pendingRequestsCount}
+                        </span>
+                      )}
+                    </>
+                  )}
+                  {tab === 'ai' && <Sparkles className="w-5.5 h-5.5" />}
+                  {tab === 'profile' && <User className="w-5.5 h-5.5" />}
                 </div>
 
                 {/* Tab textual label */}
                 <span className={`text-[8px] font-sans font-bold uppercase mt-1 tracking-wider transition-colors ${isActive ? 'text-indigo-400 font-extrabold' : 'text-zinc-500'}`}>
-                  {tab}
+                  {tab === 'ai' ? 'AI Assistant' : tab}
                 </span>
               </button>
             );
@@ -857,18 +922,6 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        {/* Friends Modal Overlay */}
-        <AnimatePresence>
-          {showFriendsModal && (
-            <FriendsModal
-              onClose={() => {
-                setShowFriendsModal(false);
-                updatePendingFriendsCount();
-              }}
-            />
-          )}
-        </AnimatePresence>
-
         {/* Complete Profile Modal */}
         <AnimatePresence>
           {showCompleteProfile && (
@@ -899,6 +952,35 @@ export default function App() {
                 }
               }}
             />
+          )}
+        </AnimatePresence>
+
+        {/* Settings Modal Overlay */}
+        <AnimatePresence>
+          {showSettingsModal && (
+            <div className="absolute inset-0 bg-black/90 backdrop-blur-xl z-50 overflow-y-auto">
+              <div className="p-4 flex justify-between items-center border-b border-zinc-800 bg-zinc-950">
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <SettingsIcon className="w-5 h-5 text-indigo-400" /> App Settings
+                </h2>
+                <button
+                  onClick={() => setShowSettingsModal(false)}
+                  className="p-2 bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white rounded-xl"
+                >
+                  Close
+                </button>
+              </div>
+              <SettingsView
+                preferences={preferences}
+                onUpdatePreferences={handleUpdatePreferences}
+                onImportData={handleImportBackup}
+                subjects={subjects}
+                records={records}
+                onRefreshNotifications={() => setNotifications(db.getNotifications())}
+                onScroll={handleViewScroll}
+                onOpenUpdates={() => setShowUpdateScreen(true)}
+              />
+            </div>
           )}
         </AnimatePresence>
 
@@ -965,6 +1047,27 @@ export default function App() {
                 </div>
               </motion.div>
             </div>
+          )}
+        </AnimatePresence>
+
+        {/* App Update Notification Modal */}
+        <AnimatePresence>
+          {showUpdateModal && updateInfo && (
+            <UpdateModal
+              currentVersion={currentAppVersion}
+              info={updateInfo}
+              onClose={() => setShowUpdateModal(false)}
+            />
+          )}
+        </AnimatePresence>
+
+        {/* App Updates Screen Overlay */}
+        <AnimatePresence>
+          {showUpdateScreen && (
+            <UpdateScreen
+              currentVersion={currentAppVersion}
+              onClose={() => setShowUpdateScreen(false)}
+            />
           )}
         </AnimatePresence>
 

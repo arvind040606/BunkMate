@@ -1035,11 +1035,15 @@ const SwipeClassCard: React.FC<SwipeClassCardProps> = ({
   };
 
   return (
-    <div className="relative overflow-hidden rounded-2xl shadow-md border border-white/5 bg-zinc-950/65 backdrop-blur-md">
+    <div className={`relative overflow-hidden rounded-2xl shadow-md border transition-all duration-300 backdrop-blur-md ${
+      currentRecord?.status === 'cancelled'
+        ? 'border-dashed border-zinc-800 bg-zinc-950/40 opacity-60'
+        : 'border-white/5 bg-zinc-950/65'
+    }`}>
       
       {/* Interactive Framer Motion Swipe Panel */}
       <motion.div
-        drag="x"
+        drag={currentRecord?.status === 'cancelled' ? false : "x"}
         dragDirectionLock={true}
         dragSnapToOrigin={true}
         dragConstraints={{ left: 0, right: 0 }}
@@ -1070,21 +1074,31 @@ const SwipeClassCard: React.FC<SwipeClassCardProps> = ({
         onTouchStart={startPressTimer}
         onTouchEnd={cancelPressTimer}
         onTouchMove={cancelPressTimer}
-        className="relative z-20 bg-[#0e0e10]/95 backdrop-blur-md p-4 cursor-grab active:cursor-grabbing select-none"
-        whileDrag={{ scale: 1.01, boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}
+        className={`relative z-20 backdrop-blur-md p-4 select-none transition-colors duration-300 ${
+          currentRecord?.status === 'cancelled' 
+            ? 'bg-[#0a0a0c]/60 cursor-default' 
+            : 'bg-[#0e0e10]/95 cursor-grab active:cursor-grabbing'
+        }`}
+        whileDrag={currentRecord?.status === 'cancelled' ? undefined : { scale: 1.01, boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}
       >
         <div className="flex justify-between items-start">
           <div className="space-y-1 flex-1 min-w-0 pr-3">
             <div className="flex items-center space-x-1.5 min-w-0">
-              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: subject.color }} />
-              <span className="text-[10px] font-mono font-bold text-zinc-500 truncate uppercase">
+              <span className={`w-2.5 h-2.5 rounded-full shrink-0 transition-opacity duration-300 ${currentRecord?.status === 'cancelled' ? 'opacity-40' : ''}`} style={{ backgroundColor: subject.color }} />
+              <span className={`text-[10px] font-mono font-bold truncate uppercase transition-colors duration-300 ${
+                currentRecord?.status === 'cancelled' ? 'text-zinc-600' : 'text-zinc-500'
+              }`}>
                 {subject.code || 'CS-CODE'} • ROOM {subject.room || 'LAB'}
               </span>
             </div>
-            <h4 className="text-sm font-display font-extrabold text-zinc-100 break-words leading-tight">
+            <h4 className={`text-sm font-display font-extrabold break-words leading-tight transition-all duration-300 ${
+              currentRecord?.status === 'cancelled' ? 'line-through text-zinc-500' : 'text-zinc-100'
+            }`}>
               {subject.name}
             </h4>
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-zinc-500 text-[10px] font-bold">
+            <div className={`flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] font-bold transition-colors duration-300 ${
+              currentRecord?.status === 'cancelled' ? 'text-zinc-650' : 'text-zinc-500'
+            }`}>
               <span className="flex items-center shrink-0">
                 <Clock className="w-3.5 h-3.5 mr-1 shrink-0" />
                 {schedule.time}
@@ -1096,7 +1110,7 @@ const SwipeClassCard: React.FC<SwipeClassCardProps> = ({
 
           {/* Health Label / Status Badge */}
           <div className="flex flex-col items-end space-y-1 shrink-0">
-            {subjectStats.totalLogged > 0 && (
+            {subjectStats.totalLogged > 0 && currentRecord?.status !== 'cancelled' && (
               <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-md ${
                 subjectStats.status === 'safe'
                   ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-900/30'
@@ -1123,17 +1137,32 @@ const SwipeClassCard: React.FC<SwipeClassCardProps> = ({
         {/* Footer log status displays */}
         {currentRecord ? (
           <div className="mt-3 pt-2.5 border-t border-zinc-900 flex items-center justify-between">
-            <span className="text-[10px] text-zinc-500 font-bold uppercase">Status Logged:</span>
+            <span className="text-[10px] text-zinc-500 font-bold uppercase">
+              {currentRecord.status === 'cancelled' ? 'Lecture Status:' : 'Status Logged:'}
+            </span>
             <div className="flex items-center space-x-2">
-              <span className={`px-2.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider text-white ${
+              <span className={`px-2.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider ${
                 currentRecord.status === 'attended'
-                  ? 'bg-emerald-600'
+                  ? 'bg-emerald-600 text-white'
                   : currentRecord.status === 'bunked'
-                    ? 'bg-rose-600'
-                    : 'bg-zinc-700'
+                    ? 'bg-rose-600 text-white'
+                    : 'bg-zinc-800 border border-zinc-700 text-zinc-400'
               }`}>
-                {currentRecord.status}
+                {currentRecord.status === 'cancelled' ? 'Cancelled 🏖️' : currentRecord.status}
               </span>
+
+              {currentRecord.status === 'cancelled' && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    triggerHaptic('light');
+                    onUndoRecent();
+                  }}
+                  className="px-2.5 py-0.5 bg-indigo-950/40 hover:bg-indigo-900/40 text-[9px] text-indigo-400 font-bold rounded border border-indigo-900/30 transition cursor-pointer"
+                >
+                  Undo
+                </button>
+              )}
             </div>
           </div>
         ) : (
@@ -1141,19 +1170,19 @@ const SwipeClassCard: React.FC<SwipeClassCardProps> = ({
             <span>Swipe card or use buttons:</span>
             <div className="flex space-x-1.5 shrink-0">
               <button
-                onClick={() => handleSwipeAction(subject.id, 'attended')}
+                onClick={() => handleSwipeAction(subject.id, 'attended', schedule.id)}
                 className="px-2 py-0.5 bg-emerald-950/40 hover:bg-emerald-900/40 text-emerald-400 rounded font-black transition cursor-pointer"
               >
                 Attend
               </button>
               <button
-                onClick={() => handleSwipeAction(subject.id, 'bunked')}
+                onClick={() => handleSwipeAction(subject.id, 'bunked', schedule.id)}
                 className="px-2 py-0.5 bg-rose-950/40 hover:bg-rose-900/40 text-rose-400 rounded font-black transition cursor-pointer"
               >
                 Bunk
               </button>
               <button
-                onClick={() => handleSwipeAction(subject.id, 'cancelled')}
+                onClick={() => handleSwipeAction(subject.id, 'cancelled', schedule.id)}
                 className="px-2 py-0.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 rounded font-black transition cursor-pointer"
               >
                 Cancel

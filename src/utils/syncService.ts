@@ -2,6 +2,7 @@ import { getApiUrl } from './api';
 import { sqliteService } from '../database/sqlite';
 import { db } from './db';
 import { AppPreferences } from '../types';
+import { updateService } from './updateService';
 
 export interface SyncStatus {
   isSyncing: boolean;
@@ -19,6 +20,8 @@ export class SyncService {
   private eventSource: EventSource | null = null;
   private sseFailureCount = 0;
   private userUpdateListeners: ((userId: string, username?: string) => void)[] = [];
+  private retryCount = 0;
+  private retryTimeout: any = null;
 
   private constructor() {}
 
@@ -36,7 +39,7 @@ export class SyncService {
     };
   }
 
-  private notifySubscribersOfUserUpdate(userId: string, username?: string) {
+  public notifySubscribersOfUserUpdate(userId: string, username?: string) {
     this.userUpdateListeners.forEach(l => {
       try {
         l(userId, username);
@@ -48,6 +51,11 @@ export class SyncService {
 
   public setupSyncStream() {
     if (typeof window === 'undefined' || typeof EventSource === 'undefined') return;
+
+    if (updateService.isForceUpdateActive()) {
+      this.closeSyncStream();
+      return;
+    }
 
     // Check if running in a production web environment (e.g. Vercel) where persistent SSE streams
     // are not sustainable/supported by the serverless runtime.
@@ -130,6 +138,42 @@ export class SyncService {
     this.listeners.forEach(l => l(status));
   }
 
+  public getHumanReadableStatus(): string {
+    const prefs = db.getPrefs();
+    if (!prefs.syncEnabled || !prefs.syncToken) {
+      return 'Offline / Local Mode';
+    }
+    if (prefs.syncDatabaseMode === 'ephemeral') {
+      return '⚠️ Server is in Ephemeral Mode. Add SUPABASE_URL in Vercel!';
+    }
+    if (this.isSyncInProgress) {
+      return 'Uploading & Syncing changes...';
+    }
+    if (this.lastError) {
+      if (this.lastError.includes('Network') || this.lastError.includes('Failed to fetch')) {
+        return 'Waiting for internet / Retrying...';
+      }
+      return `Sync warning: ${this.lastError}`;
+    }
+    const lastSynced = prefs.syncLastSynced || 0;
+    if (lastSynced === 0) {
+      return 'Pending initial sync';
+    }
+    const diffMs = Date.now() - lastSynced;
+    if (diffMs < 60000) {
+      return 'Synced just now';
+    }
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 60) {
+      return `Synced ${mins}m ago`;
+    }
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) {
+      return `Synced ${hours}h ago`;
+    }
+    return `Last sync: ${new Date(lastSynced).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  }
+
   private parseUpdatedAt(val: any): number {
     if (!val) return 0;
     if (typeof val === 'number') return val;
@@ -195,7 +239,8 @@ export class SyncService {
         lastLoggedUserId: data.userId,
         syncLastSynced: 0, // Force fresh sync
         syncLastSyncedLocal: 0,
-        syncSessionExpired: false
+        syncSessionExpired: false,
+        syncDatabaseMode: data.databaseMode
       };
 
       await db.savePrefs(updatedPrefs, false, false);
@@ -415,6 +460,14 @@ export class SyncService {
   }
 
   public async performSync(): Promise<boolean> {
+    if (updateService.isForceUpdateActive()) {
+      console.warn('[Sync] Force update active. Sync aborted.');
+      this.lastError = 'A mandatory update is required to access cloud features.';
+      this.isSyncInProgress = false;
+      this.notify();
+      return false;
+    }
+
     const prefs = db.getPrefs();
     if (!prefs.syncEnabled || !prefs.syncToken || prefs.syncSessionExpired) {
       return false;
@@ -432,21 +485,28 @@ export class SyncService {
       this.lastError = null;
       this.notify();
 
-      // Sanitize null/missing/legacy updatedAt values for proper synchronization
+      // Sanitize null/missing/legacy/future updatedAt values for proper synchronization
       const nowTs = Date.now();
       const tablesToSanitize = ['Subjects', 'Timetable', 'Attendance', 'Exams', 'Assignments', 'Settings'];
       for (const table of tablesToSanitize) {
         await sqliteService.executeSql(
-          `UPDATE ${table} SET updatedAt = ? WHERE updatedAt IS NULL OR updatedAt = '' OR updatedAt = 0 OR updatedAt = '0'`,
-          [nowTs],
+          `UPDATE ${table} SET updatedAt = ? WHERE updatedAt IS NULL OR updatedAt = '' OR updatedAt = 0 OR updatedAt = '0' OR updatedAt > ?`,
+          [nowTs, nowTs],
           false
         ).catch(err => console.warn(`Failed to sanitize table ${table}:`, err));
       }
 
-      const lastSynced = prefs.syncLastSynced || 0;
-      const lastSyncedLocal = prefs.syncLastSyncedLocal || 0;
       const clientSyncStartTime = Date.now();
+      const lastSynced = prefs.syncLastSynced || 0;
+      const isRecoveryNeeded = !prefs.syncRecovered;
+      let lastSyncedLocal = isRecoveryNeeded ? 0 : (prefs.syncLastSyncedLocal || 0);
+      if (lastSyncedLocal > clientSyncStartTime) {
+        console.warn(`[Sync] Local lastSyncedLocal timestamp (${lastSyncedLocal}) is in the future compared to clientSyncStartTime (${clientSyncStartTime}). Resetting to 0 to recover.`);
+        lastSyncedLocal = 0;
+      }
       const changes: any[] = [];
+
+      console.log(`[Sync Start] Starting sync | isRecoveryNeeded: ${isRecoveryNeeded} | lastSyncedLocal: ${lastSyncedLocal} | lastSyncedServer: ${lastSynced}`);
 
       // 1. Gather modified Subjects
       const subjectsRes = await sqliteService.executeSql('SELECT * FROM Subjects');
@@ -496,9 +556,12 @@ export class SyncService {
 
       // 3. Gather modified Attendance records
       const attendanceRes = await sqliteService.executeSql('SELECT * FROM Attendance');
+      const totalAttendanceFound = attendanceRes.rows._array.length;
+      let attendanceQueued = 0;
       for (const row of attendanceRes.rows._array) {
         const uAt = this.parseUpdatedAt(row.updatedAt);
         if (uAt > lastSyncedLocal) {
+          attendanceQueued++;
           changes.push({
             table: 'attendance',
             recordId: row.id,
@@ -512,6 +575,7 @@ export class SyncService {
           });
         }
       }
+      console.log(`[Sync Attendance Discovery] Found ${totalAttendanceFound} attendance records in local SQLite | Queued ${attendanceQueued} for cloud upload (lastSyncedLocal: ${lastSyncedLocal}).`);
 
       // 4. Gather modified Exams
       const examsRes = await sqliteService.executeSql('SELECT * FROM Exams');
@@ -599,6 +663,8 @@ export class SyncService {
       const localSubjectCountRes = await sqliteService.executeSql('SELECT COUNT(*) as count FROM Subjects');
       const localSubjectCount = localSubjectCountRes.rows._array[0]?.count || 0;
 
+      console.log(`[Sync Upload] Prepared ${changes.length} total changes (${attendanceQueued} attendance). Details:`, JSON.stringify(changes.map(c => ({ table: c.table, id: c.recordId, isDeleted: !!c.isDeleted }))));
+
       // Send to server
       const url = getApiUrl('/api/sync');
       const response = await fetch(url, {
@@ -609,6 +675,8 @@ export class SyncService {
         },
         body: JSON.stringify({ lastSynced, changes, localSubjectCount })
       });
+
+      console.log(`[Sync Server Response Status] HTTP Status: ${response.status}`);
 
       if (response.status === 401) {
         console.warn('[Sync] Authentication failed (401). Marking session as expired...');
@@ -621,6 +689,8 @@ export class SyncService {
       }
 
       const data = await response.json();
+      console.log(`[Sync Server Response Payload] Success: ${data.success} | syncTime: ${data.syncTime} | Attendance Uploaded: ${data.attendanceUploaded ?? 'N/A'} | Attendance Skipped: ${data.attendanceSkipped ?? 'N/A'} | Server Changes Returned: ${data.changes?.length || 0}`);
+
       if (!response.ok || !data.success) {
         throw new Error(data.error || 'Synchronization failed');
       }
@@ -644,9 +714,11 @@ export class SyncService {
 
       // Apply server changes to local SQLite (Download updates)
       this.isWritingSyncData = true;
+      console.log(`[Sync Download/Merge] Commencing merge of ${data.changes?.length || 0} server changes...`);
       await sqliteService.transaction(async () => {
         for (const sCh of data.changes) {
           const { table, recordId, payload, isDeleted } = sCh;
+          console.log(`[Sync Merge] Processing change from server: table=${table}, id=${recordId}, isDeleted=${!!isDeleted}`);
 
           if (isDeleted) {
             if (table === 'subjects') {
@@ -686,7 +758,7 @@ export class SyncService {
                   payload.notes || '',
                   payload.initialPresent || 0,
                   payload.initialAbsent || 0,
-                  sCh.updatedAt
+                  clientSyncStartTime
                 ]
               );
             } else if (table === 'timetable') {
@@ -698,7 +770,7 @@ export class SyncService {
                   payload.dayOfWeek,
                   payload.time,
                   payload.duration || 60,
-                  sCh.updatedAt
+                  clientSyncStartTime
                 ]
               );
             } else if (table === 'attendance') {
@@ -710,7 +782,7 @@ export class SyncService {
                   payload.date,
                   payload.status,
                   payload.timestamp,
-                  sCh.updatedAt
+                  clientSyncStartTime
                 ]
               );
             } else if (table === 'exams') {
@@ -725,7 +797,7 @@ export class SyncService {
                   payload.syllabus || '',
                   payload.room || '',
                   payload.completed ? 1 : 0,
-                  sCh.updatedAt
+                  clientSyncStartTime
                 ]
               );
             } else if (table === 'assignments') {
@@ -739,7 +811,7 @@ export class SyncService {
                   payload.dueTime || '',
                   payload.description || '',
                   payload.status || 'pending',
-                  sCh.updatedAt
+                  clientSyncStartTime
                 ]
               );
             } else if (table === 'settings') {
@@ -749,7 +821,7 @@ export class SyncService {
                   recordId,
                   payload.key,
                   typeof payload.value === 'string' ? payload.value : JSON.stringify(payload.value),
-                  sCh.updatedAt
+                  clientSyncStartTime
                 ]
               );
             }
@@ -764,9 +836,19 @@ export class SyncService {
       const nextPrefs: AppPreferences = {
         ...db.getPrefs(),
         syncLastSynced: data.syncTime,
-        syncLastSyncedLocal: clientSyncStartTime
+        syncLastSyncedLocal: clientSyncStartTime,
+        syncRecovered: true,
+        syncDatabaseMode: data.databaseMode
       };
-      db.savePrefs(nextPrefs, true);
+      await db.savePrefs(nextPrefs, false, false);
+      console.log(`[Sync Success] Sync complete. localLastSynced: ${clientSyncStartTime} | serverLastSynced: ${data.syncTime}`);
+
+      // Reset retry count on success
+      this.retryCount = 0;
+      if (this.retryTimeout) {
+        clearTimeout(this.retryTimeout);
+        this.retryTimeout = null;
+      }
 
       // Hydrate local cache and trigger UI refresh
       await db.init();
@@ -775,6 +857,16 @@ export class SyncService {
     } catch (err: any) {
       console.error('Cloud Sync service error:', err);
       this.lastError = err.message || 'Sync failed';
+
+      // Schedule exponential backoff retry on failure
+      this.retryCount++;
+      const backoffDelay = Math.min(1000 * Math.pow(2, this.retryCount), 30000);
+      console.warn(`[Sync Error] Sync failed. Scheduling retry #${this.retryCount} in ${backoffDelay}ms.`);
+      if (this.retryTimeout) clearTimeout(this.retryTimeout);
+      this.retryTimeout = setTimeout(() => {
+        this.performSync().catch(console.error);
+      }, backoffDelay);
+
       return false;
     } finally {
       this.isWritingSyncData = false;

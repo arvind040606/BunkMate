@@ -72,10 +72,13 @@ export default function FriendProfileModal({
     }
   };
 
+  // Load stats once on mount or when username changes
   useEffect(() => {
     loadStats();
-    
-    // Subscribe to real-time sync updates for this friend
+  }, [username]);
+
+  // Subscribe to real-time sync updates separately
+  useEffect(() => {
     const unsubscribe = syncService.subscribeToUserUpdates((updatedUserId, updatedUsername) => {
       const match = (stats && stats.userId === updatedUserId) || 
                     (updatedUsername && username.toLowerCase() === updatedUsername.toLowerCase());
@@ -88,7 +91,7 @@ export default function FriendProfileModal({
     return () => {
       unsubscribe();
     };
-  }, [username]);
+  }, [username, stats]);
 
   useEffect(() => {
     if (error) {

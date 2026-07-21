@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { verifyTokenAndUser } from './auth.js';
 import { dbInstance } from './database.js';
 
@@ -227,8 +228,8 @@ export default async function handler(req: any, res: any) {
       let targetUser = await dbInstance.getUserByUsername(friendUsername.toLowerCase().trim());
       if (!targetUser) {
         // If we are in local SQLite fallback mode, auto-provision the missing target user.
-        if (!process.env.TURSO_DATABASE_URL) {
-          const mockId = `user-mock-${friendUsername.toLowerCase().trim()}`;
+        if (!dbInstance.usingSupabase && !process.env.TURSO_DATABASE_URL) {
+          const mockId = randomUUID();
           console.warn(`[Friends] Friend user ${friendUsername} not found in this instance database. Auto-provisioning mock user record.`);
           await dbInstance.query(
             'INSERT OR IGNORE INTO users (id, username, passwordHash, salt, createdAt) VALUES (?, ?, ?, ?, ?)',
@@ -248,7 +249,7 @@ export default async function handler(req: any, res: any) {
         if (!friendship || friendship.status !== 'accepted') {
           // If we are in local SQLite fallback mode, the container recycle could have wiped the relationship record.
           // Since the auth signature is valid, auto-provision the friendship to allow viewing stats.
-          if (!process.env.TURSO_DATABASE_URL) {
+          if (!dbInstance.usingSupabase && !process.env.TURSO_DATABASE_URL) {
             console.warn(`[Friends] Friendship not found in this instance database between ${user.username} and ${targetUser.username}. Auto-provisioning accepted friendship.`);
             await dbInstance.addFriendRequest(user.userId, targetUser.id);
             await dbInstance.acceptFriendRequest(user.userId, targetUser.id);
@@ -285,10 +286,21 @@ export default async function handler(req: any, res: any) {
         const total = attended + bunked;
         const percentage = total > 0 ? Math.round((attended / total) * 100) : 100;
 
+        const target = sub.targetPercentage || 75;
+        let safeBunks = 0;
+        if (total > 0 && percentage >= target) {
+          safeBunks = Math.floor((100 * attended - target * total) / target);
+          if (safeBunks < 0) safeBunks = 0;
+        }
+
         return {
+          id: sub.id,
           name: sub.name,
           color: sub.color,
           attendancePercentage: percentage,
+          present: attended,
+          total,
+          safeBunks,
           todayClasses: todayClasses.map((c: any) => ({ time: c.time, duration: c.duration }))
         };
       });
@@ -335,13 +347,61 @@ export default async function handler(req: any, res: any) {
       // Calculate Overall Stats
       let totalAttended = 0;
       let totalBunked = 0;
+      let safeBunksLeft = 0;
       subjects.forEach((sub: any) => {
         const subRecords = attendance.filter((r: any) => r.subjectId === sub.id);
-        totalAttended += (sub.initialPresent || 0) + subRecords.filter((r: any) => r.status === 'attended').length;
-        totalBunked += (sub.initialAbsent || 0) + subRecords.filter((r: any) => r.status === 'bunked').length;
+        const attended = (sub.initialPresent || 0) + subRecords.filter((r: any) => r.status === 'attended').length;
+        const bunked = (sub.initialAbsent || 0) + subRecords.filter((r: any) => r.status === 'bunked').length;
+        totalAttended += attended;
+        totalBunked += bunked;
+
+        const total = attended + bunked;
+        const percentage = total > 0 ? Math.round((attended / total) * 100) : 100;
+        const target = sub.targetPercentage || 75;
+        let safeBunks = 0;
+        if (total > 0 && percentage >= target) {
+          safeBunks = Math.floor((100 * attended - target * total) / target);
+          if (safeBunks < 0) safeBunks = 0;
+        }
+        safeBunksLeft += safeBunks;
       });
       const totalConducted = totalAttended + totalBunked;
       const overallPercentage = totalConducted > 0 ? Math.round((totalAttended / totalConducted) * 100) : 100;
+
+      // Calculate current and longest streaks from attendance records
+      let longestStreak = 0;
+      let currentStreak = 0;
+      // Sort chronologically (oldest first)
+      const sortedChronologically = [...attendance].sort((a: any, b: any) => {
+        const dateCompare = (a.date || '').localeCompare(b.date || '');
+        if (dateCompare !== 0) return dateCompare;
+        return (a.createdAt || 0) - (b.createdAt || 0);
+      });
+      for (const r of sortedChronologically) {
+        if (r.status === 'attended') {
+          currentStreak++;
+          if (currentStreak > longestStreak) {
+            longestStreak = currentStreak;
+          }
+        } else if (r.status === 'bunked') {
+          currentStreak = 0;
+        }
+      }
+
+      // Sort newest first for current/active streak
+      const sortedNewestFirst = [...attendance].sort((a: any, b: any) => {
+        const dateCompare = (b.date || '').localeCompare(a.date || '');
+        if (dateCompare !== 0) return dateCompare;
+        return (b.createdAt || 0) - (a.createdAt || 0);
+      });
+      let activeStreak = 0;
+      for (const r of sortedNewestFirst) {
+        if (r.status === 'attended') {
+          activeStreak++;
+        } else if (r.status === 'bunked') {
+          break;
+        }
+      }
 
       const settings = await dbInstance.query('SELECT key, value FROM settings WHERE userId = ?', [targetUser.id]);
       const displayNameSetting = settings.find((s: any) => s.key === 'displayName');
@@ -380,6 +440,12 @@ export default async function handler(req: any, res: any) {
       sectionSettingVal = tryParse(sectionSetting);
       groupSettingVal = tryParse(groupSetting);
 
+      let maxUpdatedAt = 0;
+      subjects.forEach((s: any) => { if (s.updatedAt && Number(s.updatedAt) > maxUpdatedAt) maxUpdatedAt = Number(s.updatedAt); });
+      timetable.forEach((t: any) => { if (t.updatedAt && Number(t.updatedAt) > maxUpdatedAt) maxUpdatedAt = Number(t.updatedAt); });
+      attendance.forEach((a: any) => { if (a.updatedAt && Number(a.updatedAt) > maxUpdatedAt) maxUpdatedAt = Number(a.updatedAt); });
+      if (maxUpdatedAt === 0) maxUpdatedAt = Date.now();
+
       return sendJson(res, 200, {
         success: true,
         username: targetUser.username,
@@ -393,9 +459,16 @@ export default async function handler(req: any, res: any) {
         section: sectionSettingVal,
         group: groupSettingVal,
         overallPercentage,
+        present: totalAttended,
+        absent: totalBunked,
+        bunks: totalBunked,
+        safeBunksLeft,
+        currentStreak: activeStreak,
+        longestStreak,
         subjects: sanitizedSubjects,
         todaySchedule,
-        tomorrowSchedule
+        tomorrowSchedule,
+        updatedAt: maxUpdatedAt
       });
     }
 

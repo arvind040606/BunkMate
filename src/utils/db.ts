@@ -1,6 +1,7 @@
 import { Subject, AttendanceRecord, AppPreferences, NotificationItem, AnalyticsSummary, Exam, Assignment } from '../types';
 import { sqliteService } from '../database/sqlite';
 import { NotificationService } from './notificationService';
+import { appPreferencesStore } from './preferences';
 
 // Default Preferences
 const DEFAULT_PREFS: AppPreferences = {
@@ -18,14 +19,14 @@ const DEFAULT_PREFS: AppPreferences = {
   collegeStartTime: '09:00',
   collegeEndTime: '17:00',
   dailyClassRemindersEnabled: true,
-  displayName: 'Academic Student',
+  displayName: '',
   avatarId: 'grad_indigo',
-  major: 'Computer Science & Engineering',
-  semester: 'Semester 3',
-  collegeName: 'State University',
-  course: 'B.Tech',
-  section: 'CS-1',
-  group: 'G1',
+  major: '',
+  semester: '',
+  collegeName: '',
+  course: '',
+  section: '',
+  group: '',
   profilePrompted: false,
 };
 
@@ -138,8 +139,31 @@ export const db = {
       ]);
 
       // Parse Settings
-      const settingsRows = settingsRes.rows._array;
       const loadedPrefs: any = { ...DEFAULT_PREFS };
+      const PREFS_KEYS = [
+        ...Object.keys(DEFAULT_PREFS),
+        'syncEnabled',
+        'syncUsername',
+        'syncToken',
+        'syncUserId',
+        'syncLastSynced',
+        'syncLastSyncedLocal',
+        'syncSessionExpired',
+        'lastLoggedUserId',
+        'syncDatabaseMode'
+      ];
+      PREFS_KEYS.forEach(key => {
+        const storedVal = appPreferencesStore.getItem(key);
+        if (storedVal !== null) {
+          try {
+            loadedPrefs[key] = JSON.parse(storedVal);
+          } catch {
+            loadedPrefs[key] = storedVal;
+          }
+        }
+      });
+
+      const settingsRows = settingsRes.rows._array;
       settingsRows.forEach((row: any) => {
         settingsUpdatedAtCache[row.key] = row.updatedAt ? Number(row.updatedAt) : Date.now();
         try {
@@ -246,7 +270,9 @@ export const db = {
       console.log('BunkMate Cache synchronized with genuine SQLite Database.');
       this.notify();
     } catch (err) {
-      console.error('Failed to pre-load BunkMate cache:', err);
+      console.warn('Failed to pre-load BunkMate cache, proceeding with defaults:', err);
+      this.isInitialized = true;
+      this.notify();
     }
   },
 
@@ -276,13 +302,21 @@ export const db = {
             'syncLastSynced',
             'syncLastSyncedLocal',
             'syncSessionExpired',
-            'lastLoggedUserId'
+            'lastLoggedUserId',
+            'syncDatabaseMode'
           ];
 
           for (const [key, val] of Object.entries(prefs)) {
             // If this is a login reset, only write the sync keys to SQLite, skipping academic/general settings
             if (isLoginReset && !SYNC_KEYS.includes(key)) {
               continue;
+            }
+
+            // Sync with appPreferencesStore for cross-session web compatibility
+            if (val === undefined || val === null) {
+              appPreferencesStore.removeItem(key);
+            } else {
+              appPreferencesStore.setItem(key, JSON.stringify(val));
             }
 
             const prevVal = prevPrefs[key as keyof AppPreferences];

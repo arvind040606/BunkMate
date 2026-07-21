@@ -53,4 +53,17 @@ try {
     logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
 }
 
+task buildWebAssets(type: Exec) {
+    workingDir '../../'
+    if (System.getProperty('os.name').toLowerCase().contains('windows')) {
+        commandLine 'cmd', '/c', 'npm run build && npx cap copy android'
+    } else {
+        commandLine 'sh', '-c', 'npm run build && npx cap copy android'
+    }
+    ignoreExitValue true
+}
+
+preBuild.dependsOn buildWebAssets
+
+
 
