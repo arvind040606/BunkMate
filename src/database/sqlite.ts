@@ -93,7 +93,10 @@ export class SQLiteDatabaseService {
         this.dbConn = await this.sqliteConnection.createConnection('bunkmate', false, 'no-encryption', 1, false);
       }
 
-      await this.dbConn.open();
+      const isOpenRes = await this.dbConn.isDBOpen();
+      if (!isOpenRes.result) {
+        await this.dbConn.open();
+      }
       
       // Enable foreign keys
       await this.dbConn.execute('PRAGMA foreign_keys = ON;');
@@ -190,7 +193,35 @@ export class SQLiteDatabaseService {
     if (this.isWebFallback || !this.dbConn) return;
     const conn = await this.getConn();
     const useTransaction = !this.inTransaction;
-    await conn.execute(statements, useTransaction);
+
+    // Split statements by semicolon and filter out empty entries
+    const individualStatements = statements
+      .split(';')
+      .map(stmt => stmt.trim())
+      .filter(stmt => stmt.length > 0);
+
+    if (useTransaction) {
+      await conn.beginTransaction();
+    }
+
+    try {
+      for (const statement of individualStatements) {
+        await conn.execute(statement + ';', false);
+      }
+      if (useTransaction) {
+        await conn.commitTransaction();
+      }
+    } catch (err) {
+      if (useTransaction) {
+        try {
+          await conn.rollbackTransaction();
+        } catch (rollbackErr) {
+          console.error('Failed to rollback batch transaction:', rollbackErr);
+        }
+      }
+      throw err;
+    }
+
     if (shouldSave && !this.inTransaction && Capacitor.getPlatform() === 'web' && this.sqliteConnection) {
       await this.sqliteConnection.saveToStore('bunkmate');
     }
