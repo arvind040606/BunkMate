@@ -214,12 +214,15 @@ export default function App() {
         const res = await updateService.checkForUpdates();
         setCurrentAppVersion(res.installedVersion);
         
-        if (res.status === 'update_required' && res.info) {
-          setUpdateInfo(res.info);
-          setShowUpdateModal(true);
-        } else if (res.status === 'update_available' && res.info) {
-          const dismissedVer = localStorage.getItem('bunkmate_dismissed_update_version');
-          if (dismissedVer !== res.info.latestVersion) {
+        if ((res.status === 'update_available' || res.status === 'update_required') && res.info?.latestVersion) {
+          const cleanLatest = VersionChecker.clean(res.info.latestVersion);
+          const rawDismissed = localStorage.getItem('bunkmate_dismissed_update_version');
+          const cleanDismissed = VersionChecker.clean(rawDismissed);
+
+          // Only auto-show popup if user has NOT already acknowledged/dismissed this specific version
+          // (Unless forceUpdate is strictly set to true on server)
+          const isStrictForce = !!res.info.forceUpdate;
+          if (isStrictForce || (cleanLatest && cleanDismissed !== cleanLatest)) {
             setUpdateInfo(res.info);
             setShowUpdateModal(true);
           }
@@ -229,10 +232,10 @@ export default function App() {
       }
     };
 
-    // Check immediately on app launch (forces fresh network fetch)
+    // Check immediately on app launch
     runUpdateCheck();
 
-    // Schedule subsequent checks periodically while app is active
+    // Schedule subsequent check every 6 hours while app is active
     const updateTimer = setInterval(() => {
       runUpdateCheck();
     }, 6 * 60 * 60 * 1000);

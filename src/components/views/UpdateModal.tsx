@@ -13,11 +13,16 @@ interface UpdateModalProps {
 }
 
 export default function UpdateModal({ currentVersion, info, onClose }: UpdateModalProps) {
+  const saveDismissedVersion = () => {
+    if (info.latestVersion) {
+      const cleanVer = VersionChecker.clean(info.latestVersion) || info.latestVersion;
+      localStorage.setItem('bunkmate_dismissed_update_version', cleanVer);
+    }
+  };
+
   const handleUpdateNow = async () => {
     triggerHaptic('heavy');
-    if (info.latestVersion) {
-      localStorage.setItem('bunkmate_dismissed_update_version', info.latestVersion);
-    }
+    saveDismissedVersion();
     const opened = await updateService.openGoogleDriveApk(info.googleDriveApkUrl);
     if (opened && !info.forceUpdate) {
       onClose();
@@ -26,9 +31,7 @@ export default function UpdateModal({ currentVersion, info, onClose }: UpdateMod
 
   const handleLater = () => {
     triggerHaptic('light');
-    if (info.latestVersion) {
-      localStorage.setItem('bunkmate_dismissed_update_version', info.latestVersion);
-    }
+    saveDismissedVersion();
     onClose();
   };
 
