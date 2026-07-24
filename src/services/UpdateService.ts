@@ -193,6 +193,20 @@ export class UpdateService {
   }
 
   /**
+   * Helper to format Google Drive URLs into direct download links if necessary.
+   */
+  public formatGoogleDriveDirectLink(rawUrl: string): string {
+    if (!rawUrl || typeof rawUrl !== 'string') return rawUrl;
+    const trimmed = rawUrl.trim();
+    const driveMatch = trimmed.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
+    if (driveMatch && driveMatch[1]) {
+      const fileId = driveMatch[1];
+      return `https://drive.google.com/uc?export=download&id=${fileId}`;
+    }
+    return trimmed;
+  }
+
+  /**
    * Launches Google Drive APK URL securely.
    */
   public async openGoogleDriveApk(url: string): Promise<boolean> {
@@ -202,6 +216,8 @@ export class UpdateService {
         return false;
       }
 
+      const targetUrl = this.formatGoogleDriveDirectLink(url);
+
       this.logAnalytics(
         'download_click', 
         this.lastResult?.installedVersion || 'unknown', 
@@ -210,17 +226,18 @@ export class UpdateService {
         this.getSelectedChannel()
       );
 
-      console.log(`[UpdateService] Launching Google Drive APK URL: ${url}`);
+      console.log(`[UpdateService] Launching Google Drive APK URL: ${targetUrl}`);
       if (Capacitor.isNativePlatform()) {
-        await window.open(url, '_system');
+        await window.open(targetUrl, '_system');
       } else {
-        window.open(url, '_blank', 'noopener,noreferrer');
+        window.open(targetUrl, '_blank', 'noopener,noreferrer');
       }
       return true;
     } catch (err) {
       console.error('[UpdateService] Failed to open Google Drive APK URL:', err);
       try {
-        window.open(url, '_blank');
+        const targetUrl = this.formatGoogleDriveDirectLink(url);
+        window.open(targetUrl, '_blank');
         return true;
       } catch {
         return false;
