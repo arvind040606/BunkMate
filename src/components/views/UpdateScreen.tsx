@@ -53,6 +53,11 @@ export const UpdateScreen: React.FC<UpdateScreenProps> = ({ onClose }) => {
   const handleDownload = async () => {
     if (!result?.info?.googleDriveApkUrl) return;
     triggerHaptic('heavy');
+    if (result.info.latestVersion) {
+      const cleanVer = VersionChecker.clean(result.info.latestVersion) || result.info.latestVersion;
+      localStorage.setItem('bunkmate_dismissed_update_version', cleanVer);
+      localStorage.setItem('bunkmate_installed_version', cleanVer);
+    }
     await updateService.openGoogleDriveApk(result.info.googleDriveApkUrl);
   };
 

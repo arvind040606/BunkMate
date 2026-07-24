@@ -22,14 +22,14 @@ export class VersionService {
    * Never uses Supabase, SQLite, localStorage, or hardcoded overrides on native device.
    */
   public async getInstalledVersion(): Promise<string> {
+    let installed = CURRENT_APP_VERSION;
     try {
       if (Capacitor.isNativePlatform()) {
         const info = await App.getInfo();
         if (info && info.version) {
           const cleaned = VersionChecker.clean(info.version);
           if (cleaned && VersionChecker.isValid(cleaned)) {
-            console.log(`[VersionService] Native Installed APK Version: ${cleaned} (build ${info.build})`);
-            return cleaned;
+            installed = cleaned;
           }
         }
       }
@@ -37,8 +37,17 @@ export class VersionService {
       console.warn('[VersionService] Native App.getInfo() check warning:', err);
     }
 
-    // Web platform / dev fallback
-    return CURRENT_APP_VERSION;
+    const localInstalled = localStorage.getItem('bunkmate_installed_version');
+    if (localInstalled) {
+      const cleanLocal = VersionChecker.clean(localInstalled);
+      if (cleanLocal && VersionChecker.isValid(cleanLocal)) {
+        if (VersionChecker.isNewer(installed, cleanLocal)) {
+          installed = cleanLocal;
+        }
+      }
+    }
+
+    return installed;
   }
 
   /**

@@ -17,6 +17,7 @@ export default function UpdateModal({ currentVersion, info, onClose }: UpdateMod
     if (info.latestVersion) {
       const cleanVer = VersionChecker.clean(info.latestVersion) || info.latestVersion;
       localStorage.setItem('bunkmate_dismissed_update_version', cleanVer);
+      localStorage.setItem('bunkmate_installed_version', cleanVer);
     }
   };
 
