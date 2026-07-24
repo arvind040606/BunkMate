@@ -2,7 +2,7 @@ import { App } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { VersionChecker } from '../utils/versionChecker';
 
-export const CURRENT_APP_VERSION = '1.1.1';
+export const CURRENT_APP_VERSION = '1.0.1';
 
 export class VersionService {
   private static instance: VersionService;
