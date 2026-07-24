@@ -1,19 +1,24 @@
 import React from 'react';
 import { motion } from 'motion/react';
 import { ArrowUpCircle, ChevronRight, Download, RefreshCw } from 'lucide-react';
-import { updateService, VersionInfo } from '../../utils/updateService';
+import { updateService } from '../../services/UpdateService';
+import { ReleaseInfo } from '../../types/updateTypes';
 import { triggerHaptic } from '../../utils/db';
+import { VersionChecker } from '../../utils/versionChecker';
 
 interface UpdateModalProps {
   currentVersion: string;
-  info: VersionInfo;
+  info: ReleaseInfo;
   onClose: () => void;
 }
 
 export default function UpdateModal({ currentVersion, info, onClose }: UpdateModalProps) {
   const handleUpdateNow = async () => {
     triggerHaptic('heavy');
-    const opened = await updateService.openDownloadLink(info.downloadUrl);
+    if (info.latestVersion) {
+      localStorage.setItem('bunkmate_dismissed_update_version', info.latestVersion);
+    }
+    const opened = await updateService.openGoogleDriveApk(info.googleDriveApkUrl);
     if (opened && !info.forceUpdate) {
       onClose();
     }
@@ -21,11 +26,14 @@ export default function UpdateModal({ currentVersion, info, onClose }: UpdateMod
 
   const handleLater = () => {
     triggerHaptic('light');
+    if (info.latestVersion) {
+      localStorage.setItem('bunkmate_dismissed_update_version', info.latestVersion);
+    }
     onClose();
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 select-none">
       {/* Backdrop */}
       <motion.div
         initial={{ opacity: 0 }}
@@ -54,23 +62,27 @@ export default function UpdateModal({ currentVersion, info, onClose }: UpdateMod
         </div>
 
         {/* Title & Subtitle */}
-        <h2 className="text-xl font-extrabold text-white text-center tracking-tight mb-1">
+        <h2 className="text-xl font-extrabold text-white text-center tracking-tight mb-1 font-display">
           Update Available! 🚀
         </h2>
-        <p className="text-xs text-zinc-400 text-center mb-4">
-          A new version of BunkMate is ready to install.
+        <p className="text-xs text-zinc-400 text-center mb-4 font-semibold">
+          {info.releaseTitle || 'A new version of BunkMate is ready to install.'}
         </p>
 
         {/* Version Badges Compare */}
         <div className="flex items-center justify-center gap-3 bg-zinc-900/60 border border-zinc-800/40 rounded-2xl py-3 px-4 mb-4">
           <div className="flex flex-col items-center">
-            <span className="text-[9px] uppercase tracking-wider text-zinc-500 font-bold">Current</span>
-            <span className="text-sm font-semibold text-zinc-300">v{currentVersion}</span>
+            <span className="text-[9px] uppercase tracking-wider text-zinc-500 font-bold">Installed</span>
+            <span className="text-sm font-semibold text-zinc-300 font-mono">
+              {VersionChecker.isValid(currentVersion) ? `v${VersionChecker.formatDisplayVersion(currentVersion)}` : VersionChecker.formatDisplayVersion(currentVersion)}
+            </span>
           </div>
           <ChevronRight className="w-4 h-4 text-zinc-600 mt-2" />
           <div className="flex flex-col items-center">
             <span className="text-[9px] uppercase tracking-wider text-indigo-400 font-bold">Latest</span>
-            <span className="text-sm font-bold text-indigo-400">v{info.latestVersion}</span>
+            <span className="text-sm font-bold text-indigo-400 font-mono">
+              {info.latestVersion}
+            </span>
           </div>
         </div>
 
@@ -90,7 +102,7 @@ export default function UpdateModal({ currentVersion, info, onClose }: UpdateMod
         <div className="flex flex-col gap-2 w-full">
           <button
             onClick={handleUpdateNow}
-            className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-bold py-3 rounded-2xl transition-all shadow-lg active:scale-95 cursor-pointer select-none"
+            className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-bold py-3 rounded-2xl transition-all shadow-lg active:scale-95 cursor-pointer text-xs"
           >
             <Download className="w-4 h-4" />
             Update Now
@@ -99,14 +111,14 @@ export default function UpdateModal({ currentVersion, info, onClose }: UpdateMod
           {info.forceUpdate ? (
             <button
               onClick={handleLater}
-              className="w-full text-zinc-550 hover:text-zinc-400 font-semibold py-2.5 rounded-2xl transition-all cursor-pointer text-center text-xs select-none"
+              className="w-full text-zinc-550 hover:text-zinc-400 font-semibold py-2.5 rounded-2xl transition-all cursor-pointer text-center text-xs"
             >
-              Continue Offline (Disable Sync)
+              Dismiss
             </button>
           ) : (
             <button
               onClick={handleLater}
-              className="w-full text-zinc-500 hover:text-zinc-300 font-semibold py-2.5 rounded-2xl transition-all cursor-pointer text-center text-xs select-none"
+              className="w-full text-zinc-500 hover:text-zinc-300 font-semibold py-2.5 rounded-2xl transition-all cursor-pointer text-center text-xs"
             >
               Later
             </button>
@@ -117,7 +129,7 @@ export default function UpdateModal({ currentVersion, info, onClose }: UpdateMod
         {info.forceUpdate && (
           <p className="text-[10px] text-zinc-500 text-center mt-3 font-semibold flex items-center justify-center gap-1">
             <RefreshCw className="w-3 h-3 animate-spin text-indigo-500" />
-            This update is required to continue using BunkMate.
+            This update is mandatory to ensure cloud stability.
           </p>
         )}
       </motion.div>

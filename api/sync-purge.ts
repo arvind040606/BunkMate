@@ -36,6 +36,8 @@ export default async function handler(req: any, res: any) {
   try {
     // Delete all user data from all tables (keep user in users table)
     await dbInstance.run('DELETE FROM subjects WHERE userId = ?', [user.userId]);
+    await dbInstance.run('DELETE FROM timetable WHERE userId = ?', [user.userId]);
+    await dbInstance.run('DELETE FROM attendance WHERE userId = ?', [user.userId]);
     await dbInstance.run('DELETE FROM assignments WHERE userId = ?', [user.userId]);
     await dbInstance.run('DELETE FROM exams WHERE userId = ?', [user.userId]);
     await dbInstance.run('DELETE FROM settings WHERE userId = ?', [user.userId]);

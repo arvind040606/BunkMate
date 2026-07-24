@@ -43,6 +43,7 @@ import LoginModal from './components/views/LoginModal';
 import UpdateModal from './components/views/UpdateModal';
 import { UpdateScreen } from './components/views/UpdateScreen';
 import { updateService, VersionInfo } from './utils/updateService';
+import { versionService } from './services/VersionService';
 
 type Tab = 'home' | 'subjects' | 'calendar' | 'friends' | 'ai' | 'profile';
 
@@ -112,7 +113,7 @@ export default function App() {
   // App updates state
   const [showUpdateModal, setShowUpdateModal] = useState<boolean>(false);
   const [updateInfo, setUpdateInfo] = useState<VersionInfo | null>(null);
-  const [currentAppVersion, setCurrentAppVersion] = useState<string>('1.0.0');
+  const [currentAppVersion, setCurrentAppVersion] = useState<string>('1.0.6');
   const [showUpdateScreen, setShowUpdateScreen] = useState<boolean>(false);
 
   const handleOpenWizard = () => {
@@ -206,30 +207,35 @@ export default function App() {
     };
   }, []);
 
-  // Check for app updates on launch and set a 12-hour background interval
+  // Check for app updates on launch and set a background interval
   useEffect(() => {
-    const runUpdateCheck = async (isLaunch: boolean) => {
+    const runUpdateCheck = async () => {
       try {
-        const ver = await updateService.getAppVersion();
-        setCurrentAppVersion(ver);
+        const res = await updateService.checkForUpdates();
+        setCurrentAppVersion(res.installedVersion);
         
-        const check = await updateService.checkForUpdates(isLaunch);
-        if (check.updateAvailable && check.info) {
-          setUpdateInfo(check.info);
+        if (res.status === 'update_required' && res.info) {
+          setUpdateInfo(res.info);
           setShowUpdateModal(true);
+        } else if (res.status === 'update_available' && res.info) {
+          const dismissedVer = localStorage.getItem('bunkmate_dismissed_update_version');
+          if (dismissedVer !== res.info.latestVersion) {
+            setUpdateInfo(res.info);
+            setShowUpdateModal(true);
+          }
         }
       } catch (err) {
-        console.error('[App] Startup/periodic update check error:', err);
+        console.error('[App] Startup update check error:', err);
       }
     };
 
-    // Check immediately on app launch (forced network fetch)
-    runUpdateCheck(true);
+    // Check immediately on app launch (forces fresh network fetch)
+    runUpdateCheck();
 
-    // Schedule subsequent checks every 12 hours while the app is active
+    // Schedule subsequent checks periodically while app is active
     const updateTimer = setInterval(() => {
-      runUpdateCheck(false); // throttled check
-    }, 12 * 60 * 60 * 1000);
+      runUpdateCheck();
+    }, 6 * 60 * 60 * 1000);
 
     return () => clearInterval(updateTimer);
   }, []);
@@ -716,6 +722,7 @@ export default function App() {
                   records={records}
                   preferences={preferences}
                   onLogAttendance={handleLogAttendance}
+                  onDeleteRecord={handleDeleteRecord}
                   onOpenNotifications={() => setShowNotifications(true)}
                   notificationCount={unreadNotifsCount}
                   onUndoRecent={handleUndoRecent}
@@ -904,8 +911,6 @@ export default function App() {
               onToggleRecordStatus={handleToggleRecordStatus}
               onDeleteRecord={handleDeleteRecord}
               onPin={handlePinSubject}
-              onArchive={handleArchiveSubject}
-              onDuplicate={handleDuplicateSubject}
             />
           )}
         </AnimatePresence>

@@ -243,7 +243,7 @@ export class SyncService {
         syncDatabaseMode: data.databaseMode
       };
 
-      await db.savePrefs(updatedPrefs, false, false);
+      await db.savePrefs(updatedPrefs, false, true);
       
       this.setupSyncStream();
 
@@ -815,15 +815,24 @@ export class SyncService {
                 ]
               );
             } else if (table === 'settings') {
+              const settingKey = payload?.key || recordId.replace(/^settings-/, '');
               await sqliteService.executeSql(
                 'INSERT OR REPLACE INTO Settings (id, key, value, updatedAt) VALUES (?, ?, ?, ?)',
                 [
-                  recordId,
-                  payload.key,
+                  settingKey,
+                  settingKey,
                   typeof payload.value === 'string' ? payload.value : JSON.stringify(payload.value),
                   clientSyncStartTime
                 ]
               );
+              if (payload?.value !== undefined && payload?.value !== null) {
+                try {
+                  const val = typeof payload.value === 'string' ? JSON.parse(payload.value) : payload.value;
+                  appPreferencesStore.setItem(settingKey, JSON.stringify(val));
+                } catch {
+                  appPreferencesStore.setItem(settingKey, String(payload.value));
+                }
+              }
             }
           }
         }

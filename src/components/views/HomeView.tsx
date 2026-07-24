@@ -20,6 +20,7 @@ interface HomeViewProps {
   onOpenFriends?: () => void;
   pendingFriendsCount?: number;
   onOpenLoginModal?: () => void;
+  onDeleteRecord?: (recordId: string) => void;
 }
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -102,6 +103,7 @@ export default function HomeView({
   onOpenFriends,
   pendingFriendsCount,
   onOpenLoginModal,
+  onDeleteRecord,
 }: HomeViewProps) {
   const overallStats = calculateOverallStats(subjects, records, preferences.globalTarget);
 
@@ -875,7 +877,7 @@ export default function HomeView({
         {/* Tip banner about gestures */}
         <div className="bg-zinc-950/40 border border-zinc-900/50 p-2.5 rounded-2xl text-[10px] text-zinc-400 font-semibold flex items-center space-x-2">
           <span className="px-1.5 py-0.5 bg-zinc-800 text-zinc-300 rounded-md font-mono font-bold">GESTURES</span>
-          <p>Swipe Right: Attend | Swipe Left: Bunk | Double Tap: Undo | Long Press: Detail</p>
+          <p>Swipe Right: Attend | Swipe Left: Bunk | Or use action buttons</p>
         </div>
 
         {todayClasses.length === 0 ? (
@@ -898,6 +900,7 @@ export default function HomeView({
                 onSelectSubject={onSelectSubject}
                 onUndoRecent={onUndoRecent}
                 handleSwipeAction={handleSwipeAction}
+                onDeleteRecord={onDeleteRecord}
               />
             ))}
           </div>
@@ -924,6 +927,7 @@ interface SwipeClassCardProps {
   onSelectSubject: (subject: Subject) => void;
   onUndoRecent: () => void;
   handleSwipeAction: (subjectId: string, status: 'attended' | 'bunked' | 'cancelled', scheduleId?: string) => void;
+  onDeleteRecord?: (recordId: string) => void;
 }
 
 const SwipeClassCard: React.FC<SwipeClassCardProps> = ({
@@ -936,14 +940,10 @@ const SwipeClassCard: React.FC<SwipeClassCardProps> = ({
   onSelectSubject,
   onUndoRecent,
   handleSwipeAction,
+  onDeleteRecord,
 }) => {
   const [offsetX, setOffsetX] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
-
-  // References for robust gesture detection (supports both touch and mouse)
-  const pressTimerRef = React.useRef<NodeJS.Timeout | null>(null);
-  const lastTapRef = React.useRef<number>(0);
-  const lastTouchTimeRef = React.useRef<number>(0);
 
   const currentRecord = getClassRecordStatus(subject.id, schedule.id);
   const subjectStats = calculateSubjectStats(subject, records);
@@ -987,53 +987,6 @@ const SwipeClassCard: React.FC<SwipeClassCardProps> = ({
     }
   }
 
-  // Unified start handler for both mouse and touch input
-  const startPressTimer = (e: React.MouseEvent | React.TouchEvent) => {
-    // Prevent simulated mouse events after a real touch event
-    if (e.type === 'mousedown') {
-      if (Date.now() - lastTouchTimeRef.current < 500) {
-        return;
-      }
-      // Ensure only left click triggers actions
-      if ((e as React.MouseEvent).button !== 0) return;
-    } else if (e.type === 'touchstart') {
-      lastTouchTimeRef.current = Date.now();
-    }
-
-    // 1. Double tap/click detection
-    const now = Date.now();
-    const DOUBLE_TAP_DELAY = 300;
-    if (now - lastTapRef.current < DOUBLE_TAP_DELAY) {
-      if (pressTimerRef.current) {
-        clearTimeout(pressTimerRef.current);
-        pressTimerRef.current = null;
-      }
-      triggerHaptic('medium');
-      onUndoRecent();
-      lastTapRef.current = 0; // Reset to prevent triple-taps registering as double
-      return;
-    }
-    lastTapRef.current = now;
-
-    // 2. Long press / context-select detection
-    if (pressTimerRef.current) {
-      clearTimeout(pressTimerRef.current);
-    }
-    pressTimerRef.current = setTimeout(() => {
-      triggerHaptic('heavy');
-      onSelectSubject(subject);
-      pressTimerRef.current = null;
-    }, 600);
-  };
-
-  // Cancel long press when tap ends or mouse leaves
-  const cancelPressTimer = () => {
-    if (pressTimerRef.current) {
-      clearTimeout(pressTimerRef.current);
-      pressTimerRef.current = null;
-    }
-  };
-
   return (
     <div className={`relative overflow-hidden rounded-2xl shadow-md border transition-all duration-300 backdrop-blur-md ${
       currentRecord?.status === 'cancelled'
@@ -1050,7 +1003,6 @@ const SwipeClassCard: React.FC<SwipeClassCardProps> = ({
         dragElastic={0.65}
         onDragStart={() => {
           setIsDragging(true);
-          cancelPressTimer();
         }}
         onDrag={(event, info) => {
           setOffsetX(info.offset.x);
@@ -1068,12 +1020,6 @@ const SwipeClassCard: React.FC<SwipeClassCardProps> = ({
             handleSwipeAction(subject.id, 'bunked', schedule.id);
           }
         }}
-        onMouseDown={startPressTimer}
-        onMouseUp={cancelPressTimer}
-        onMouseLeave={cancelPressTimer}
-        onTouchStart={startPressTimer}
-        onTouchEnd={cancelPressTimer}
-        onTouchMove={cancelPressTimer}
         className={`relative z-20 backdrop-blur-md p-4 select-none transition-colors duration-300 ${
           currentRecord?.status === 'cancelled' 
             ? 'bg-[#0a0a0c]/60 cursor-default' 
@@ -1125,7 +1071,7 @@ const SwipeClassCard: React.FC<SwipeClassCardProps> = ({
             <div className="flex space-x-1.5">
               <button
                 onClick={() => { triggerHaptic('medium'); onSelectSubject(subject); }}
-                className="p-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-lg transition"
+                className="p-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-lg transition cursor-pointer"
                 title="More details / Log history"
               >
                 <Edit3 className="w-3.5 h-3.5" />
@@ -1151,18 +1097,18 @@ const SwipeClassCard: React.FC<SwipeClassCardProps> = ({
                 {currentRecord.status === 'cancelled' ? 'Cancelled 🏖️' : currentRecord.status}
               </span>
 
-              {currentRecord.status === 'cancelled' && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    triggerHaptic('light');
-                    onUndoRecent();
-                  }}
-                  className="px-2.5 py-0.5 bg-indigo-950/40 hover:bg-indigo-900/40 text-[9px] text-indigo-400 font-bold rounded border border-indigo-900/30 transition cursor-pointer"
-                >
-                  Undo
-                </button>
-              )}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  triggerHaptic('light');
+                  if (onDeleteRecord) {
+                    onDeleteRecord(currentRecord.id);
+                  }
+                }}
+                className="px-2.5 py-0.5 bg-zinc-900 hover:bg-zinc-800 hover:text-zinc-200 border border-zinc-800 text-zinc-400 font-bold rounded text-[9px] transition cursor-pointer"
+              >
+                Clear Log
+              </button>
             </div>
           </div>
         ) : (

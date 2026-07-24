@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { Settings, Sliders, Volume2, Key, Download, Upload, Trash2, ShieldCheck, RefreshCw, AlertTriangle, Fingerprint, Lock, CheckCircle2, Bell, Clock, Sparkles, Shield, Eye, EyeOff, FileText, Cloud, Users, Smartphone, LogOut, User, Image as ImageIcon, ZoomIn, ZoomOut, X, HelpCircle } from 'lucide-react';
 import { AppPreferences, Subject, AttendanceRecord } from '../../types';
@@ -6,6 +7,7 @@ import { triggerHaptic, db } from '../../utils/db';
 import { encryptData, decryptData } from '../../utils/crypto';
 import { syncService } from '../../utils/syncService';
 import { updateService } from '../../utils/updateService';
+import { VersionChecker } from '../../utils/versionChecker';
 import CompleteProfileModal, { getAvatarEmoji, renderAvatar } from './CompleteProfileModal';
 
 interface SettingsViewProps {
@@ -35,7 +37,7 @@ export default function SettingsView({
   const [pinError, setPinError] = useState<string>('');
 
   // App Update states
-  const [appVersion, setAppVersion] = useState<string>('1.0.0');
+  const [appVersion, setAppVersion] = useState<string>('1.0.6');
   const [isCheckingUpdate, setIsCheckingUpdate] = useState<boolean>(false);
   const [updateResult, setUpdateResult] = useState<{
     status: 'idle' | 'up_to_date' | 'available' | 'error';
@@ -419,8 +421,9 @@ export default function SettingsView({
   const handlePurgeConfirm = async () => {
     triggerHaptic('error');
     try {
+      syncService.closeSyncStream();
       if (preferences.syncEnabled && preferences.syncToken) {
-        await syncService.purgeCloudData();
+        await syncService.purgeCloudData().catch(console.error);
       }
     } catch (err) {
       console.error('Failed to purge cloud data on server during storage wipe:', err);
@@ -777,14 +780,14 @@ export default function SettingsView({
       {/* App version footer */}
       <div className="text-center pt-4">
         <p className="text-xs font-display font-semibold text-zinc-500">BunkMate Handcrafted Mobile App</p>
-        <p className="text-[10px] font-mono text-zinc-500 mt-0.5">Version 1.0.0 </p>
+        <p className="text-[10px] font-mono text-zinc-500 mt-0.5">
+          Version {VersionChecker.isValid(appVersion) ? `v${VersionChecker.formatDisplayVersion(appVersion)}` : VersionChecker.formatDisplayVersion(appVersion)}
+        </p>
         <p className="text-[10px] font-sans font-medium text-zinc-650 mt-2">Developed by <span className="font-semibold text-zinc-450">Arvind Madaan</span></p>
       </div>
-
-      {/* Passcode lock setup modal overlay */}
       <AnimatePresence>
-        {showPinSetupModal && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-6 select-none">
+        {showPinSetupModal && createPortal(
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[9999] flex items-center justify-center p-6 select-none">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -832,14 +835,15 @@ export default function SettingsView({
                 </button>
               </div>
             </motion.div>
-          </div>
+          </div>,
+          document.body
         )}
       </AnimatePresence>
 
       {/* JSON Import backup Modal */}
       <AnimatePresence>
-        {showImportTextModal && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-6 select-none">
+        {showImportTextModal && createPortal(
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[9999] flex items-center justify-center p-6 select-none">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -978,26 +982,27 @@ export default function SettingsView({
                 </div>
               )}
             </motion.div>
-          </div>
+          </div>,
+          document.body
         )}
       </AnimatePresence>
 
       {/* Password protection export setup modal overlay */}
       <AnimatePresence>
-        {showExportModal && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-6 select-none">
+        {showExportModal && createPortal(
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[9999] flex items-center justify-center p-6 select-none">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white rounded-3xl p-6 w-full max-w-[340px] shadow-2xl border border-slate-100 space-y-4"
+              className="bg-zinc-950 rounded-3xl p-6 w-full max-w-[340px] shadow-2xl border border-zinc-800 space-y-4 text-white"
             >
-              <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto">
+              <div className="w-12 h-12 bg-indigo-950/50 text-indigo-400 rounded-full flex items-center justify-center mx-auto border border-indigo-900/30">
                 <ShieldCheck className="w-6 h-6 animate-pulse" />
               </div>
               <div className="text-center">
-                <h4 className="text-base font-display font-bold text-slate-900">Secure Your Local Backup</h4>
-                <p className="text-slate-400 text-[11px] mt-1.5 leading-normal">
+                <h4 className="text-base font-display font-bold text-white">Secure Your Local Backup</h4>
+                <p className="text-zinc-400 text-[11px] mt-1.5 leading-normal">
                   (Optional) Enter a password to encrypt your logs and syllabus securely. If left empty, your backup will be exported as standard plain JSON.
                 </p>
               </div>
@@ -1009,12 +1014,12 @@ export default function SettingsView({
                     value={exportPassword}
                     onChange={e => setExportPassword(e.target.value)}
                     placeholder="Create Backup Password (Optional)"
-                    className="w-full pl-3.5 pr-10 py-3 bg-slate-50 border border-slate-200 text-slate-800 rounded-xl text-xs font-semibold focus:outline-none focus:border-indigo-500"
+                    className="w-full pl-3.5 pr-10 py-3 bg-zinc-900 border border-zinc-800 text-white rounded-xl text-xs font-semibold focus:outline-none focus:border-indigo-500"
                   />
                   <button
                     type="button"
                     onClick={() => setShowExportPasswordText(!showExportPasswordText)}
-                    className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 cursor-pointer"
+                    className="absolute right-3 top-3 text-zinc-500 hover:text-zinc-300 cursor-pointer"
                   >
                     {showExportPasswordText ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -1031,20 +1036,20 @@ export default function SettingsView({
                       value={confirmExportPassword}
                       onChange={e => setConfirmExportPassword(e.target.value)}
                       placeholder="Confirm Backup Password"
-                      className="w-full pl-3.5 pr-10 py-3 bg-slate-50 border border-slate-200 text-slate-800 rounded-xl text-xs font-semibold focus:outline-none focus:border-indigo-500"
+                      className="w-full pl-3.5 pr-10 py-3 bg-zinc-900 border border-zinc-800 text-white rounded-xl text-xs font-semibold focus:outline-none focus:border-indigo-500"
                     />
                   </motion.div>
                 )}
 
                 {exportPasswordError && (
-                  <p className="text-[10px] text-rose-500 font-semibold text-center leading-normal">{exportPasswordError}</p>
+                  <p className="text-[10px] text-rose-455 font-semibold text-center leading-normal">{exportPasswordError}</p>
                 )}
               </div>
 
               <div className="flex space-x-3 pt-2">
                 <button
                   onClick={() => { triggerHaptic('light'); setShowExportModal(false); setExportPassword(''); setConfirmExportPassword(''); setExportPasswordError(''); }}
-                  className="flex-1 py-2.5 text-xs font-semibold bg-slate-100 text-slate-700 rounded-xl transition cursor-pointer"
+                  className="flex-1 py-2.5 text-xs font-semibold bg-zinc-900 text-zinc-300 rounded-xl transition cursor-pointer"
                   disabled={isExporting}
                 >
                   Cancel
@@ -1065,14 +1070,15 @@ export default function SettingsView({
                 </button>
               </div>
             </motion.div>
-          </div>
+          </div>,
+          document.body
         )}
       </AnimatePresence>
 
       {/* Confirm preloaded mock database restore */}
       <AnimatePresence>
-        {showResetConfirm && (
-          <div className="fixed inset-0 bg-black/85 z-[60] flex items-center justify-center p-6 text-center select-none backdrop-blur-md">
+        {showResetConfirm && createPortal(
+          <div className="fixed inset-0 bg-black/85 z-[9999] flex items-center justify-center p-6 text-center select-none backdrop-blur-md">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -1101,14 +1107,15 @@ export default function SettingsView({
                 </button>
               </div>
             </motion.div>
-          </div>
+          </div>,
+          document.body
         )}
       </AnimatePresence>
 
       {/* Confirm database purge */}
       <AnimatePresence>
-        {showPurgeConfirm && (
-          <div className="fixed inset-0 bg-black/85 z-[60] flex items-center justify-center p-6 text-center select-none backdrop-blur-md">
+        {showPurgeConfirm && createPortal(
+          <div className="fixed inset-0 bg-black/85 z-[9999] flex items-center justify-center p-6 text-center select-none backdrop-blur-md">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -1137,16 +1144,15 @@ export default function SettingsView({
                 </button>
               </div>
             </motion.div>
-          </div>
+          </div>,
+          document.body
         )}
       </AnimatePresence>
 
-
-
       {/* Custom Success Popup */}
       <AnimatePresence>
-        {successPopup.show && (
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-md z-50 flex items-center justify-center p-6 select-none">
+        {successPopup.show && createPortal(
+          <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-[9999] flex items-center justify-center p-6 select-none">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -1176,19 +1182,21 @@ export default function SettingsView({
                 Let's Go!
               </button>
             </motion.div>
-          </div>
+          </div>,
+          document.body
         )}
       </AnimatePresence>
 
       {/* Complete Profile Modal */}
       <AnimatePresence>
-        {showCompleteProfileModal && (
+        {showCompleteProfileModal && createPortal(
           <CompleteProfileModal
             onClose={() => setShowCompleteProfileModal(false)}
             onSave={() => {
               onUpdatePreferences(db.getPrefs());
             }}
-          />
+          />,
+          document.body
         )}
       </AnimatePresence>
 

@@ -1,47 +1,55 @@
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 
-// Initialize dotenv in non-production environments to load local .env variables
-if (process.env.NODE_ENV !== 'production') {
-  dotenv.config();
-}
+// Initialize dotenv to load environment variables
+dotenv.config();
 
 /**
  * Dynamic retriever that scans environment variables for any configured Gemini API keys.
- * Captures the default `GEMINI_API_KEY` as well as any numbered variables such as
- * `GEMINI_API_KEY_1`, `GEMINI_API_KEY_2`, `GEMINI_API_KEY_3`, etc.
+ * Captures `GEMINI_API_KEY`, `VITE_GEMINI_API_KEY`, `GEMINI_API_KEYS`, as well as any
+ * numbered variables such as `GEMINI_API_KEY_1`, `GEMINI_API_KEY_2`, etc.
+ * Cleans surrounding quotes and splits comma-separated key lists if present.
  * 
  * @returns {string[]} List of unique Gemini API keys found.
  */
 export function getGeminiApiKeys(): string[] {
+  // Re-run dotenv to ensure latest env values are present
+  try {
+    dotenv.config();
+  } catch (e) {
+    // Ignore errors if dotenv cannot read file
+  }
+
   const keys: string[] = [];
 
-  // 1. Check primary default key
-  if (process.env.GEMINI_API_KEY) {
-    keys.push(process.env.GEMINI_API_KEY);
-  }
-
-  // 2. Try sequential indices (GEMINI_API_KEY_1, GEMINI_API_KEY_2, etc.)
-  let index = 1;
-  while (true) {
-    const key = process.env[`GEMINI_API_KEY_${index}`];
-    if (key) {
-      if (!keys.includes(key)) {
-        keys.push(key);
+  const addKey = (raw: string | undefined) => {
+    if (!raw || typeof raw !== 'string') return;
+    // Handle comma, semicolon, or newline separated keys in a single variable
+    const parts = raw.split(/[\n,;]/);
+    for (const part of parts) {
+      const cleaned = part.trim().replace(/^["']|["']$/g, '').trim();
+      if (cleaned.length > 5 && !keys.includes(cleaned)) {
+        keys.push(cleaned);
       }
-      index++;
-    } else {
-      break;
     }
-  }
+  };
 
-  // 3. Fallback: scan all environment variables to catch non-sequential numbered keys
+  // 1. Direct standard keys
+  addKey(process.env.GEMINI_API_KEY);
+  addKey(process.env.VITE_GEMINI_API_KEY);
+  addKey(process.env.GEMINI_API_KEYS);
+  addKey(process.env.VITE_GEMINI_API_KEYS);
+  addKey(process.env.GEMINI_KEY);
+  addKey(process.env.GEMINI_KEYS);
+
+  // 2. Scan all environment variables for numbered key variants (e.g. GEMINI_API_KEY_1, VITE_GEMINI_API_KEY_2)
   for (const envKey of Object.keys(process.env)) {
-    if (envKey.startsWith('GEMINI_API_KEY_')) {
-      const keyVal = process.env[envKey];
-      if (keyVal && !keys.includes(keyVal)) {
-        keys.push(keyVal);
-      }
+    if (
+      envKey.startsWith('GEMINI_API_KEY_') ||
+      envKey.startsWith('VITE_GEMINI_API_KEY_') ||
+      envKey.startsWith('GEMINI_KEY_')
+    ) {
+      addKey(process.env[envKey]);
     }
   }
 
@@ -52,9 +60,9 @@ export function getGeminiApiKeys(): string[] {
 let activeKeyIndex = 0;
 
 /**
- * Executes a Gemini content generation request with automatic API key failover/rotation.
- * If a rate limit or quota exceeded error is returned by a key, it automatically switches
- * to the next available key and retries the request.
+ * Executes a Gemini content generation request with automatic API key rotation & model failover.
+ * If a key encounters rate limits, quota exhaustion, or temporary errors, it automatically
+ * shifts to the next available key. If a model fails across all keys, it falls back to backup models.
  * 
  * @param requestConfig The parameters passed to GoogleGenAI models.generateContent.
  * @returns {Promise<any>} The response object from Gemini.
@@ -65,62 +73,64 @@ export async function generateContentWithRotation(requestConfig: any): Promise<a
     throw new Error('Gemini API key is missing. Please configure GEMINI_API_KEY in your environment.');
   }
 
+  const requestedModel = requestConfig.model || 'gemini-2.5-flash';
+  // Candidate models sequence for failover fallback
+  const candidateModels = Array.from(
+    new Set([requestedModel, 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'])
+  );
+
   const totalKeys = keys.length;
-  let attempts = 0;
+  let lastError: any = null;
 
-  while (attempts < totalKeys) {
-    // Calculate the index of the key to use for this attempt (starts at activeKeyIndex)
-    const keyIndex = (activeKeyIndex + attempts) % totalKeys;
-    const apiKey = keys[keyIndex];
+  for (const modelName of candidateModels) {
+    let attempts = 0;
+    const currentConfig = { ...requestConfig, model: modelName };
 
-    // Masked logging - only log the key index, never the actual key value
-    console.log(`[Gemini Rotation] Attempting request using Key #${keyIndex + 1} of ${totalKeys}`);
+    while (attempts < totalKeys) {
+      const keyIndex = (activeKeyIndex + attempts) % totalKeys;
+      const apiKey = keys[keyIndex];
 
-    try {
-      const ai = new GoogleGenAI({
-        apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          },
-        },
-      });
-
-      const response = await ai.models.generateContent(requestConfig);
-      
-      // If we succeed, save this key index as the active one for future requests
-      activeKeyIndex = keyIndex;
-      return response;
-    } catch (err: any) {
-      const errorMessage = err?.message || '';
-      const errorStatus = err?.status || err?.statusCode || 0;
-
-      console.warn(
-        `[Gemini Rotation] Request failed using Key #${keyIndex + 1}: Status ${errorStatus} | Error: ${errorMessage}`
+      console.log(
+        `[Gemini Rotation] Attempting request using Model '${modelName}' | Key #${keyIndex + 1} of ${totalKeys}`
       );
 
-      // Quota / rate limit errors identification
-      const isQuotaOrRateLimit =
-        errorStatus === 429 ||
-        errorMessage.includes('RESOURCE_EXHAUSTED') ||
-        errorMessage.includes('Rate limit exceeded') ||
-        errorMessage.includes('Daily quota exceeded') ||
-        errorMessage.includes('quota') ||
-        errorMessage.includes('exhausted') ||
-        errorMessage.includes('429');
+      try {
+        const ai = new GoogleGenAI({
+          apiKey,
+          httpOptions: {
+            headers: {
+              'User-Agent': 'aistudio-build',
+            },
+          },
+        });
 
-      if (isQuotaOrRateLimit) {
-        console.warn(`[Gemini Rotation] Key #${keyIndex + 1} is rate-limited or quota exhausted. Rotating keys...`);
-        attempts++;
-      } else {
-        // For standard error types (e.g., prompt issues, server hiccups), still rotate/retry to maximize success,
-        // but log them as general errors.
-        console.warn(`[Gemini Rotation] Encountered general failure on Key #${keyIndex + 1}. Attempting failover to next key.`);
+        const response = await ai.models.generateContent(currentConfig);
+
+        if (response && response.text) {
+          // Record successful key index for subsequent calls
+          activeKeyIndex = keyIndex;
+          return response;
+        }
+
+        throw new Error('Empty response returned from Gemini API.');
+      } catch (err: any) {
+        lastError = err;
+        const errorMessage = err?.message || String(err);
+        const errorStatus = err?.status || err?.statusCode || 0;
+
+        console.warn(
+          `[Gemini Rotation] Request failed using Model '${modelName}' | Key #${keyIndex + 1}: Status ${errorStatus} | Error: ${errorMessage}`
+        );
+
         attempts++;
       }
     }
+
+    console.warn(`[Gemini Rotation] Model '${modelName}' failed across all ${totalKeys} keys. Trying candidate fallback model...`);
   }
 
-  // If we reach this point, all keys have failed
-  throw new Error('All configured Gemini API keys have failed or exhausted their quota.');
+  // If we reach this point, all keys and model candidate fallbacks have failed
+  throw new Error(
+    `All configured Gemini API keys and model fallbacks failed. Last error: ${lastError?.message || 'Quota or connection failure'}`
+  );
 }

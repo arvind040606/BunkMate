@@ -801,7 +801,7 @@ class DB {
       else if (table === 'attendance') {
         const { subjectId, date, status, timestamp, createdAt } = parsedPayload;
 
-        // Auto-heal missing subject record in Supabase to prevent Foreign Key constraint (code 23503) failures
+        // Auto-heal missing subject record in Supabase: skip orphaned attendance record instead of creating fake subjects
         if (subjectId) {
           const { data: subCheck } = await this.supabase
             .from('subjects')
@@ -810,16 +810,8 @@ class DB {
             .maybeSingle();
 
           if (!subCheck) {
-            console.warn(`[Supabase Attendance FK Heal] Subject ${subjectId} missing in Supabase for user ${userId}. Auto-provisioning placeholder subject...`);
-            await this.supabase.from('subjects').upsert([{
-              id: subjectId,
-              userId,
-              name: 'General Subject',
-              code: '',
-              color: '#4F46E5',
-              targetPercentage: 75,
-              updatedAt: effectiveUpdatedAt
-            }], { onConflict: 'id' });
+            console.warn(`[Supabase Attendance FK Check] Subject ${subjectId} missing in Supabase for user ${userId}. Skipping orphaned attendance record.`);
+            return { success: true, skipped: true, reason: 'subject_not_found' };
           }
         }
 
@@ -885,16 +877,18 @@ class DB {
       
       else if (table === 'settings') {
         const { key, value, createdAt } = parsedPayload;
+        const settingKey = key || recordId.replace(/^settings-/, '');
+        const targetSettingId = `settings-${userId}-${settingKey}`;
         const { error: setErr } = await this.supabase
           .from('settings')
           .upsert([{
-            id: targetId,
+            id: targetSettingId,
             userId,
-            key,
+            key: settingKey,
             value: typeof value === 'string' ? value : JSON.stringify(value),
             createdAt: getEpochTimestamp(createdAt),
             updatedAt: serverSyncTime
-          }]);
+          }], { onConflict: 'id' });
         if (setErr) throw new Error(`[Supabase settings upsert error]: ${setErr.message}`);
       }
       return;

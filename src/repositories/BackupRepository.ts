@@ -6,11 +6,13 @@ import { NotificationRepository } from './NotificationRepository';
 import { ExamRepository } from './ExamRepository';
 import { AssignmentRepository } from './AssignmentRepository';
 
+import { CURRENT_APP_VERSION } from '../utils/updateService';
+
 export class BackupRepository {
   public static async generateBackupData(): Promise<string> {
     const backup = {
       app: 'BunkMate',
-      version: '1.0.0',
+      version: CURRENT_APP_VERSION,
       timestamp: Date.now(),
       subjects: await SubjectRepository.getAll(),
       records: await AttendanceRepository.getAll(),

@@ -110,11 +110,46 @@ export class SQLiteDatabaseService {
         console.warn('[SQLite Init] Integrity check query warning (database preserved):', corruptionErr);
       }
       
+      // Ensure all core relational tables exist on database initialization
+      await this.ensureCoreTablesExist();
+
       this.isInitialized = true;
     } catch (err) {
       console.warn('Failed to initialize Capacitor SQLite, enabling web memory fallback:', err);
       this.isWebFallback = true;
       this.isInitialized = true;
+    }
+  }
+
+  private async ensureCoreTablesExist(): Promise<void> {
+    if (!this.dbConn) return;
+    const coreTables = [
+      `CREATE TABLE IF NOT EXISTS Settings (id TEXT PRIMARY KEY, key TEXT UNIQUE NOT NULL, value TEXT NOT NULL, createdAt TEXT, updatedAt TEXT);`,
+      `CREATE TABLE IF NOT EXISTS Subjects (id TEXT PRIMARY KEY, name TEXT NOT NULL, code TEXT, room TEXT, teacher TEXT, color TEXT NOT NULL, targetPercentage INTEGER DEFAULT 75, isPinned INTEGER DEFAULT 0, isArchived INTEGER DEFAULT 0, icon TEXT, notes TEXT, initialPresent INTEGER DEFAULT 0, initialAbsent INTEGER DEFAULT 0, createdAt TEXT, updatedAt TEXT);`,
+      `CREATE TABLE IF NOT EXISTS Attendance (id TEXT PRIMARY KEY, subjectId TEXT NOT NULL, date TEXT NOT NULL, status TEXT NOT NULL, timestamp INTEGER NOT NULL, createdAt TEXT, updatedAt TEXT);`,
+      `CREATE TABLE IF NOT EXISTS Assignments (id TEXT PRIMARY KEY, subjectId TEXT NOT NULL, title TEXT NOT NULL, dueDate TEXT NOT NULL, dueTime TEXT, description TEXT, status TEXT DEFAULT 'pending', createdAt TEXT, updatedAt TEXT);`,
+      `CREATE TABLE IF NOT EXISTS Exams (id TEXT PRIMARY KEY, subjectId TEXT NOT NULL, title TEXT NOT NULL, date TEXT NOT NULL, time TEXT, syllabus TEXT, room TEXT, completed INTEGER DEFAULT 0, createdAt TEXT, updatedAt TEXT);`,
+      `CREATE TABLE IF NOT EXISTS Timetable (id TEXT PRIMARY KEY, subjectId TEXT NOT NULL, dayOfWeek INTEGER NOT NULL, time TEXT NOT NULL, duration INTEGER, createdAt TEXT, updatedAt TEXT);`,
+      `CREATE TABLE IF NOT EXISTS Notifications (id TEXT PRIMARY KEY, title TEXT NOT NULL, message TEXT NOT NULL, timestamp INTEGER NOT NULL, type TEXT NOT NULL, read INTEGER DEFAULT 0, createdAt TEXT, updatedAt TEXT);`,
+      `CREATE TABLE IF NOT EXISTS Achievements (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL, unlockedAt INTEGER, createdAt TEXT, updatedAt TEXT);`,
+      `CREATE TABLE IF NOT EXISTS sync_deletions (id TEXT PRIMARY KEY, tableName TEXT NOT NULL, recordId TEXT NOT NULL, deletedAt INTEGER NOT NULL);`,
+      `CREATE TABLE IF NOT EXISTS AITimetableHistory (id TEXT PRIMARY KEY, rawText TEXT, parsedData TEXT, timestamp INTEGER, createdAt TEXT, updatedAt TEXT);`,
+      `CREATE TABLE IF NOT EXISTS AttendanceHistory (id TEXT PRIMARY KEY, action TEXT, subjectId TEXT, date TEXT, status TEXT, timestamp INTEGER, createdAt TEXT, updatedAt TEXT);`,
+      `CREATE TABLE IF NOT EXISTS BackupMetadata (id TEXT PRIMARY KEY, filename TEXT, timestamp INTEGER, type TEXT, checksum TEXT, createdAt TEXT, updatedAt TEXT);`,
+      `CREATE TABLE IF NOT EXISTS FriendAttendance (username TEXT PRIMARY KEY, stats TEXT NOT NULL, updatedAt INTEGER NOT NULL);`,
+      `CREATE INDEX IF NOT EXISTS idx_attendance_subject ON Attendance (subjectId);`,
+      `CREATE INDEX IF NOT EXISTS idx_timetable_subject ON Timetable (subjectId);`,
+      `CREATE INDEX IF NOT EXISTS idx_exams_subject ON Exams (subjectId);`,
+      `CREATE INDEX IF NOT EXISTS idx_assignments_subject ON Assignments (subjectId);`,
+      `CREATE INDEX IF NOT EXISTS idx_settings_key ON Settings (key);`
+    ];
+
+    for (const sql of coreTables) {
+      try {
+        await this.dbConn.run(sql, [], false);
+      } catch (e) {
+        console.warn('[SQLite Emergency Table Init Warning]:', e);
+      }
     }
   }
 
@@ -125,7 +160,7 @@ export class SQLiteDatabaseService {
     return this.runSequentially(() => this.executeSqlInternal(sql, params, shouldSave));
   }
 
-  private async executeSqlInternal(sql: string, params: any[] = [], shouldSave = true): Promise<SQLResultSet> {
+  private async executeSqlInternal(sql: string, params: any[] = [], shouldSave = true, isRetry = false): Promise<SQLResultSet> {
     if (this.isWebFallback || !this.dbConn) {
       return {
         insertId: undefined,
@@ -176,7 +211,17 @@ export class SQLiteDatabaseService {
           }
         };
       }
-    } catch (err) {
+    } catch (err: any) {
+      const errMsg = err?.message || String(err);
+      if (!isRetry && errMsg.includes('no such table')) {
+        console.warn(`[SQLite Self-Healing] Missing table detected (${errMsg}). Auto-creating schema tables and retrying query...`);
+        try {
+          await this.ensureCoreTablesExist();
+          return await this.executeSqlInternal(sql, params, shouldSave, true);
+        } catch (retryErr) {
+          console.error('[SQLite Self-Healing] Retry after auto-creation failed:', retryErr);
+        }
+      }
       console.error(`SQL Error executing [${sql}] with params ${JSON.stringify(params)}:`, err);
       throw err;
     }

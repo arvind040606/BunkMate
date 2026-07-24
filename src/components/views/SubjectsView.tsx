@@ -19,12 +19,7 @@ export default function SubjectsView({
   onOpenAddSubject,
   onScroll,
 }: SubjectsViewProps) {
-  const [activeTab, setActiveTab] = useState<'active' | 'archived'>('active');
-
-  const activeSubjects = subjects.filter(s => !s.isArchived);
-  const archivedSubjects = subjects.filter(s => s.isArchived);
-
-  const displayedSubjects = activeTab === 'active' ? activeSubjects : archivedSubjects;
+  const displayedSubjects = subjects;
 
   // Sorting: Pinned first, then alphabetically by name
   const sortedSubjects = [...displayedSubjects].sort((a, b) => {
@@ -57,32 +52,6 @@ export default function SubjectsView({
           </button>
         </div>
 
-        {/* Active vs Archived Selector Tabs */}
-        {subjects.length > 0 && (
-          <div className="flex bg-zinc-900 p-1 rounded-xl">
-            <button
-              onClick={() => { triggerHaptic('light'); setActiveTab('active'); }}
-              className={`flex-1 py-2 text-xs font-bold rounded-lg transition ${
-                activeTab === 'active'
-                  ? 'bg-zinc-800 text-white shadow-xs'
-                  : 'text-zinc-500 hover:text-zinc-350'
-              }`}
-            >
-              Active ({activeSubjects.length})
-            </button>
-            <button
-              onClick={() => { triggerHaptic('light'); setActiveTab('archived'); }}
-              className={`flex-1 py-2 text-xs font-bold rounded-lg transition ${
-                activeTab === 'archived'
-                  ? 'bg-zinc-800 text-white shadow-xs'
-                  : 'text-zinc-500 hover:text-zinc-355'
-              }`}
-            >
-              Archived ({archivedSubjects.length})
-            </button>
-          </div>
-        )}
-
         {/* List of registered Subjects */}
         {displayedSubjects.length === 0 ? (
           <div className="py-16 px-6 glass-card text-center space-y-5 shadow-md">
@@ -92,21 +61,17 @@ export default function SubjectsView({
             <div className="space-y-2">
               <p className="text-xl font-display font-black text-white">No subjects yet.</p>
               <p className="text-sm font-semibold text-zinc-500 max-w-[280px] mx-auto">
-                {activeTab === 'active' 
-                  ? 'Create your first subject to begin tracking.' 
-                  : 'No archived courses found in your catalog.'}
+                Create your first subject to begin tracking.
               </p>
             </div>
-            {activeTab === 'active' && (
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={() => { triggerHaptic('medium'); onOpenAddSubject(); }}
-                className="py-3.5 px-8 bg-indigo-600 text-white font-bold rounded-2xl text-xs hover:bg-indigo-700 shadow-md shadow-indigo-600/20 transition mx-auto cursor-pointer"
-              >
-                Add Subject
-              </motion.button>
-            )}
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => { triggerHaptic('medium'); onOpenAddSubject(); }}
+              className="py-3.5 px-8 bg-indigo-600 text-white font-bold rounded-2xl text-xs hover:bg-indigo-700 shadow-md shadow-indigo-600/20 transition mx-auto cursor-pointer"
+            >
+              Add Subject
+            </motion.button>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4">

@@ -36,4 +36,26 @@ export class UpdateRepository {
       localStorage.setItem(this.LAST_CHECK_KEY, time.toString());
     } catch {}
   }
+
+  private static DISMISSED_KEY = 'bunkmate_dismissed_update_version';
+
+  public static getDismissedVersion(): string | null {
+    try {
+      return localStorage.getItem(this.DISMISSED_KEY);
+    } catch {
+      return null;
+    }
+  }
+
+  public static saveDismissedVersion(version: string): void {
+    try {
+      localStorage.setItem(this.DISMISSED_KEY, version);
+    } catch {}
+  }
+
+  public static clearDismissedVersion(): void {
+    try {
+      localStorage.removeItem(this.DISMISSED_KEY);
+    } catch {}
+  }
 }

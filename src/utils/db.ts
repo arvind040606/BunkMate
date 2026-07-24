@@ -1,5 +1,6 @@
 import { Subject, AttendanceRecord, AppPreferences, NotificationItem, AnalyticsSummary, Exam, Assignment } from '../types';
 import { sqliteService } from '../database/sqlite';
+import { databaseService } from '../repositories/DatabaseService';
 import { NotificationService } from './notificationService';
 import { appPreferencesStore } from './preferences';
 
@@ -103,23 +104,7 @@ export const db = {
   // INITIALIZE CACHE FROM SQLite
   async init(): Promise<void> {
     try {
-      // Sanitize null/missing/legacy updatedAt values for proper synchronization
-      const nowTs = Date.now();
-      const tablesToSanitize = ['Subjects', 'Timetable', 'Attendance', 'Exams', 'Assignments', 'Settings'];
-      for (const table of tablesToSanitize) {
-        await sqliteService.executeSql(
-          `UPDATE ${table} SET updatedAt = ? WHERE updatedAt IS NULL OR updatedAt = '' OR updatedAt = 0 OR updatedAt = '0'`,
-          [nowTs],
-          false
-        ).catch(err => console.warn(`Failed to sanitize table ${table}:`, err));
-      }
-
-      // Clean up legacy settings rows with corrupted/duplicate IDs
-      await sqliteService.executeSql(
-        "DELETE FROM Settings WHERE id != 'settings-' || key"
-      ).catch(err => console.warn('Failed to clean up duplicate legacy settings rows:', err));
-
-      // Execute all SELECT queries in parallel for peak performance
+      // Execute all SELECT queries in parallel immediately for instant zero-latency loading
       const [
         settingsRes,
         subjectsRes,
@@ -137,6 +122,24 @@ export const db = {
         sqliteService.executeSql('SELECT * FROM Exams'),
         sqliteService.executeSql('SELECT * FROM Assignments')
       ]);
+
+      // Non-blocking background sanitization of missing updatedAt values & orphan cleanup
+      setTimeout(() => {
+        const nowTs = Date.now();
+        const tablesToSanitize = ['Subjects', 'Timetable', 'Attendance', 'Exams', 'Assignments', 'Settings'];
+        tablesToSanitize.forEach(table => {
+          sqliteService.executeSql(
+            `UPDATE ${table} SET updatedAt = ? WHERE updatedAt IS NULL OR updatedAt = '' OR updatedAt = 0 OR updatedAt = '0'`,
+            [nowTs],
+            false
+          ).catch(() => {});
+        });
+        sqliteService.executeSql("DELETE FROM Subjects WHERE name = 'General Subject'").catch(() => {});
+        sqliteService.executeSql("DELETE FROM Attendance WHERE subjectId NOT IN (SELECT id FROM Subjects)").catch(() => {});
+        sqliteService.executeSql("DELETE FROM Timetable WHERE subjectId NOT IN (SELECT id FROM Subjects)").catch(() => {});
+        sqliteService.executeSql("DELETE FROM Exams WHERE subjectId IS NOT NULL AND subjectId NOT IN (SELECT id FROM Subjects)").catch(() => {});
+        sqliteService.executeSql("DELETE FROM Assignments WHERE subjectId IS NOT NULL AND subjectId NOT IN (SELECT id FROM Subjects)").catch(() => {});
+      }, 500);
 
       // Parse Settings
       const loadedPrefs: any = { ...DEFAULT_PREFS };
@@ -167,9 +170,15 @@ export const db = {
       settingsRows.forEach((row: any) => {
         settingsUpdatedAtCache[row.key] = row.updatedAt ? Number(row.updatedAt) : Date.now();
         try {
-          loadedPrefs[row.key] = JSON.parse(row.value);
+          const parsedVal = JSON.parse(row.value);
+          // Only overwrite loadedPrefs if parsedVal is non-empty or local loadedPrefs has no value
+          if (parsedVal !== '' && parsedVal !== null && parsedVal !== undefined) {
+            loadedPrefs[row.key] = parsedVal;
+          }
         } catch {
-          loadedPrefs[row.key] = row.value;
+          if (row.value !== '' && row.value !== null && row.value !== undefined) {
+            loadedPrefs[row.key] = row.value;
+          }
         }
       });
 
@@ -190,8 +199,8 @@ export const db = {
       cache.prefs = loadedPrefs;
 
       // Parse Subjects & Timetable
-      const subjectsRows = subjectsRes.rows._array;
-      const timetableRows = timetableRes.rows._array;
+      const subjectsRows = subjectsRes?.rows?._array || [];
+      const timetableRows = timetableRes?.rows?._array || [];
 
       const schedulesBySubject: { [subjId: string]: any[] } = {};
       timetableRows.forEach((row: any) => {
@@ -225,26 +234,29 @@ export const db = {
       }));
 
       // Parse Records
-      cache.records = recordsRes.rows._array.map((row: any) => ({
+      const recordsRows = recordsRes?.rows?._array || [];
+      cache.records = recordsRows.map((row: any) => ({
         id: row.id,
         subjectId: row.subjectId,
         date: row.date,
         status: row.status as any,
-        timestamp: Number(row.timestamp)
+        timestamp: Number(row.timestamp) || Date.now()
       }));
 
       // Parse Notifications
-      cache.notifications = notifRes.rows._array.map((row: any) => ({
+      const notifRows = notifRes?.rows?._array || [];
+      cache.notifications = notifRows.map((row: any) => ({
         id: row.id,
         title: row.title,
         message: row.message,
-        timestamp: Number(row.timestamp),
+        timestamp: Number(row.timestamp) || Date.now(),
         type: row.type as any,
         read: row.read === 1
       }));
 
       // Parse Exams
-      cache.exams = examsRes.rows._array.map((row: any) => ({
+      const examsRows = examsRes?.rows?._array || [];
+      cache.exams = examsRows.map((row: any) => ({
         id: row.id,
         subjectId: row.subjectId,
         title: row.title,
@@ -256,7 +268,8 @@ export const db = {
       }));
 
       // Parse Assignments
-      cache.assignments = assignmentsRes.rows._array.map((row: any) => ({
+      const assignmentsRows = assignmentsRes?.rows?._array || [];
+      cache.assignments = assignmentsRows.map((row: any) => ({
         id: row.id,
         subjectId: row.subjectId,
         title: row.title,
@@ -293,6 +306,7 @@ export const db = {
     return new Promise<void>((resolve, reject) => {
       const runAsyncSave = async () => {
         try {
+          await databaseService.initialize();
           const nextUpdatedAt = getNextMutationTimestamp();
           const SYNC_KEYS = [
             'syncEnabled',
@@ -376,19 +390,42 @@ export const db = {
         const newSubIds = subjects.map(s => s.id);
         const newTimeIds = subjects.flatMap(s => (s.schedule || []).map(entry => entry.id));
 
-        // Delete subjects no longer in the list
+        // Delete subjects no longer in the list and cascade to attendance, exams, assignments, timetable
         const subsToDelete = dbSubIds.filter(id => !newSubIds.includes(id));
         if (subsToDelete.length > 0) {
           const placeholders = subsToDelete.map(() => '?').join(',');
-          await sqliteService.executeSql(`DELETE FROM Subjects WHERE id IN (${placeholders})`, subsToDelete);
-          for (const id of subsToDelete) {
-            await logDeletion('subjects', id);
-          }
+
+          // Fetch associated record IDs before deleting so we can log tombstones for cloud sync
+          const [attRes, exRes, asgRes, timeRes] = await Promise.all([
+            sqliteService.executeSql(`SELECT id FROM Attendance WHERE subjectId IN (${placeholders})`, subsToDelete),
+            sqliteService.executeSql(`SELECT id FROM Exams WHERE subjectId IN (${placeholders})`, subsToDelete),
+            sqliteService.executeSql(`SELECT id FROM Assignments WHERE subjectId IN (${placeholders})`, subsToDelete),
+            sqliteService.executeSql(`SELECT id FROM Timetable WHERE subjectId IN (${placeholders})`, subsToDelete)
+          ]);
+
+          const attIds = (attRes.rows._array || []).map((r: any) => r.id);
+          const exIds = (exRes.rows._array || []).map((r: any) => r.id);
+          const asgIds = (asgRes.rows._array || []).map((r: any) => r.id);
+          const timeIds = (timeRes.rows._array || []).map((r: any) => r.id);
+
+          await Promise.all([
+            sqliteService.executeSql(`DELETE FROM Subjects WHERE id IN (${placeholders})`, subsToDelete),
+            sqliteService.executeSql(`DELETE FROM Attendance WHERE subjectId IN (${placeholders})`, subsToDelete),
+            sqliteService.executeSql(`DELETE FROM Exams WHERE subjectId IN (${placeholders})`, subsToDelete),
+            sqliteService.executeSql(`DELETE FROM Assignments WHERE subjectId IN (${placeholders})`, subsToDelete),
+            sqliteService.executeSql(`DELETE FROM Timetable WHERE subjectId IN (${placeholders})`, subsToDelete)
+          ]);
+
+          for (const id of subsToDelete) await logDeletion('subjects', id);
+          for (const id of attIds) await logDeletion('attendance', id);
+          for (const id of exIds) await logDeletion('exams', id);
+          for (const id of asgIds) await logDeletion('assignments', id);
+          for (const id of timeIds) await logDeletion('timetable', id);
         }
 
-        // Delete timetable entries no longer in the list or belonging to deleted subjects
+        // Delete timetable entries no longer in the schedule list
         const timeToDelete = dbTimeEntries
-          .filter((row: any) => !newTimeIds.includes(row.id) || subsToDelete.includes(row.subjectId))
+          .filter((row: any) => !newTimeIds.includes(row.id) && !subsToDelete.includes(row.subjectId))
           .map((row: any) => row.id);
         if (timeToDelete.length > 0) {
           const placeholders = timeToDelete.map(() => '?').join(',');
@@ -762,12 +799,17 @@ export const db = {
     settingsUpdatedAtCache = {};
 
     try {
-      const tables = ['Subjects', 'Timetable', 'Attendance', 'Notifications', 'Exams', 'Assignments', 'Settings'];
+      const tables = ['Subjects', 'Timetable', 'Attendance', 'Notifications', 'Exams', 'Assignments', 'Settings', 'sync_deletions'];
       for (const table of tables) {
-        await sqliteService.executeSql(`DELETE FROM ${table}`);
+        await sqliteService.executeSql(`DELETE FROM ${table}`).catch(() => {});
+      }
+      await appPreferencesStore.clear();
+      if (typeof window !== 'undefined') {
+        try { window.localStorage.clear(); } catch {}
+        try { window.sessionStorage.clear(); } catch {}
       }
     } catch (err) {
-      console.error('Failed to clear all SQLite data:', err);
+      console.error('Failed to clear all SQLite data & preferences:', err);
     } finally {
       this.notify();
     }

@@ -13,8 +13,6 @@ interface SubjectDetailModalProps {
   onToggleRecordStatus: (recordId: string, newStatus: 'attended' | 'bunked' | 'cancelled') => void;
   onDeleteRecord: (recordId: string) => void;
   onPin?: (id: string) => void;
-  onArchive?: (id: string) => void;
-  onDuplicate?: (id: string) => void;
 }
 
 export default function SubjectDetailModal({
@@ -26,8 +24,6 @@ export default function SubjectDetailModal({
   onToggleRecordStatus,
   onDeleteRecord,
   onPin,
-  onArchive,
-  onDuplicate,
 }: SubjectDetailModalProps) {
   const stats = calculateSubjectStats(subject, records);
   const filteredRecords = records
@@ -110,7 +106,7 @@ export default function SubjectDetailModal({
                   onClick={() => { triggerHaptic('light'); onPin(subject.id); }}
                   className={`p-1.5 border rounded-full transition cursor-pointer ${
                     subject.isPinned 
-                      ? 'bg-amber-500/15 border-amber-500/20 text-amber-450' 
+                      ? 'bg-amber-500/15 border-amber-500/20 text-amber-455' 
                       : 'bg-zinc-900 hover:bg-zinc-850 border-zinc-800 text-zinc-350'
                   }`}
                   title={subject.isPinned ? "Unpin Subject" : "Pin Subject"}
@@ -118,38 +114,16 @@ export default function SubjectDetailModal({
                   <Pin className={`w-4 h-4 ${subject.isPinned ? 'fill-amber-550' : ''}`} />
                 </button>
               )}
-              {onArchive && (
-                <button
-                  onClick={() => { triggerHaptic('light'); onArchive(subject.id); }}
-                  className={`p-1.5 border rounded-full transition cursor-pointer ${
-                    subject.isArchived 
-                      ? 'bg-purple-500/15 border-purple-500/20 text-purple-405' 
-                      : 'bg-zinc-900 hover:bg-zinc-850 border-zinc-800 text-zinc-350'
-                  }`}
-                  title={subject.isArchived ? "Unarchive Subject" : "Archive Subject"}
-                >
-                  <Archive className="w-4 h-4" />
-                </button>
-              )}
-              {onDuplicate && (
-                <button
-                  onClick={() => { triggerHaptic('medium'); onDuplicate(subject.id); onClose(); }}
-                  className="p-1.5 bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-zinc-350 rounded-full transition cursor-pointer"
-                  title="Duplicate Subject"
-                >
-                  <Copy className="w-4 h-4" />
-                </button>
-              )}
               <button
                 onClick={() => { triggerHaptic('light'); onEdit(); }}
-                className="p-1.5 bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-zinc-350 rounded-full transition cursor-pointer"
+                className="p-1.5 bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-zinc-355 rounded-full transition cursor-pointer"
                 title="Edit Subject"
               >
                 <Edit2 className="w-4 h-4" />
               </button>
               <button
                 onClick={() => { triggerHaptic('light'); onClose(); }}
-                className="p-1.5 bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-zinc-350 rounded-full transition cursor-pointer"
+                className="p-1.5 bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-zinc-355 rounded-full transition cursor-pointer"
                 title="Close"
               >
                 <X className="w-4 h-4" />
